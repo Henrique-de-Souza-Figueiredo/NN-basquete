@@ -2,7 +2,7 @@
 # NN LEAGUE - CONFIGURAÇÕES GERAIS
 # ==========================================
 
-HOST = 'localhost'
+HOST = '10.92.3.127'
 PORT = 5555
 BUFFER_SIZE = 4096
 
@@ -18,7 +18,7 @@ FPS = 60
 GRAVITY = 0.8
 
 # PONTUAÇÃO MÁXIMA PARA ACABAR O JOGO
-MAX_SCORE = 2  # Mude para 30 ou mais quando for jogar pra valer!
+MAX_SCORE = 40  # Mude para 30 ou mais quando for jogar pra valer!
 
 # ... (Cores...)
 

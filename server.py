@@ -16,7 +16,7 @@ rooms = {}
 
 ROLETA_OUTCOMES = ["BUFF_BOLACHA", "BUFF_PULO", "BUFF_FORCA", "DEBUFF_PULO", "DEBUFF_VELOCIDADE", "DEBUFF_FORCA",
                    "JACKPOT"]
-ROLETA_WEIGHTS = [0, 0, 5, 5, 5, 0, 50]
+ROLETA_WEIGHTS = [22, 22, 21, 10, 10, 10, 5]
 
 
 def generate_room_code():
@@ -38,22 +38,29 @@ def room_physics_loop(room_code):
 
             ball_floor_hit = GROUND_Y - BALL_RAD
             if ball['y'] >= ball_floor_hit:
-                ball['y'] = ball_floor_hit;
-                ball['vel_y'] *= -0.7;
+                ball['y'] = ball_floor_hit
+                ball['vel_y'] *= -0.7
                 ball['vel_x'] *= 0.9
-            if ball['x'] <= BALL_RAD or ball['x'] >= WIDTH - BALL_RAD: ball['vel_x'] *= -0.8
+
+            if ball['x'] <= BALL_RAD or ball['x'] >= WIDTH - BALL_RAD:
+                ball['vel_x'] *= -0.8
 
             for pid, p in room['players'].items():
                 if p.get('roleta_state') == 'CUTSCENE': continue
                 char_center_x = p['x'] + CHAR_W // 2
                 char_center_y = p['y'] + CHAR_H // 2
                 dist = math.hypot(char_center_x - ball['x'], char_center_y - ball['y'])
-                if dist < CATCH_DIST: ball['holder'] = pid; break
+
+                if dist < CATCH_DIST:
+                    ball['holder'] = pid
+                    break
 
                 if p.get('clone_timer', 0) > 0:
                     clone_offset = -(CHAR_W + 10) if p['team'] == 1 else (CHAR_W + 10)
                     clone_dist = math.hypot((char_center_x + clone_offset) - ball['x'], char_center_y - ball['y'])
-                    if clone_dist < CATCH_DIST: ball['holder'] = pid; break
+                    if clone_dist < CATCH_DIST:
+                        ball['holder'] = pid
+                        break
         else:
             holder_id = ball['holder']
             if holder_id in room['players']:
@@ -67,12 +74,12 @@ def room_physics_loop(room_code):
         # 2. PONTUAÇÃO E FIM DE JOGO
         hoop_y_zone = HEIGHT - 340
         score_changed = False
-        if ball['y'] > hoop_y_zone - 30 and ball['y'] < hoop_y_zone:
+        if hoop_y_zone - 30 < ball['y'] < hoop_y_zone:
             if 95 <= ball['x'] <= 145 and ball['vel_y'] > 0:
-                room['score'][1] += 2;
+                room['score'][1] += 2
                 score_changed = True
             elif (WIDTH - 145) <= ball['x'] <= (WIDTH - 95) and ball['vel_y'] > 0:
-                room['score'][0] += 2;
+                room['score'][0] += 2
                 score_changed = True
 
         if score_changed:
@@ -107,8 +114,8 @@ def room_physics_loop(room_code):
                         room['ball']['holder'] = pid  # Rouba a bola
                         enemy['stun_timer'] = 120  # Paralisado por 2 segundos
                         p['dash_timer'] = 0  # Finaliza o dash na hora do impacto
-            # -----------------------------------
 
+            # ROLETA DO PAULO
             r_state = p.get('roleta_state', 'IDLE')
             if r_state == 'SPINNING':
                 p['roleta_timer'] -= 1
@@ -116,9 +123,10 @@ def room_physics_loop(room_code):
                     outcome = random.choices(ROLETA_OUTCOMES, weights=ROLETA_WEIGHTS, k=1)[0]
                     p['roleta_result'] = outcome
                     if outcome == "JACKPOT":
-                        p['roleta_state'] = 'CUTSCENE'; p['roleta_timer'] = 180
+                        p['roleta_state'] = 'CUTSCENE'
+                        p['roleta_timer'] = 180
                     else:
-                        p['roleta_state'] = 'FINISHED';
+                        p['roleta_state'] = 'FINISHED'
                         p['roleta_timer'] = 120
                         if outcome == "BUFF_BOLACHA":
                             p['cookie_buff_timer'] = 300
@@ -132,14 +140,20 @@ def room_physics_loop(room_code):
                             p['speed_debuff_timer'] = 300
                         elif outcome == "DEBUFF_FORCA":
                             p['throw_debuff_timer'] = 300
+
             elif r_state == 'CUTSCENE':
                 p['roleta_timer'] -= 1
-                if p['roleta_timer'] <= 0: p['roleta_state'] = 'FINISHED'; p['roleta_timer'] = 120; p[
-                    'jackpot_timer'] = 900
+                if p['roleta_timer'] <= 0:
+                    p['roleta_state'] = 'FINISHED'
+                    p['roleta_timer'] = 120
+                    p['jackpot_timer'] = 900
+
             elif r_state == 'FINISHED':
                 p['roleta_timer'] -= 1
-                if p['roleta_timer'] <= 0: p['roleta_state'] = 'IDLE'
+                if p['roleta_timer'] <= 0:
+                    p['roleta_state'] = 'IDLE'
 
+            # DIMINUI OS OUTROS TIMERS
             if p.get('jackpot_timer', 0) > 0: p['jackpot_timer'] -= 1
             if p.get('jump_buff_timer', 0) > 0: p['jump_buff_timer'] -= 1
             if p.get('throw_buff_timer', 0) > 0: p['throw_buff_timer'] -= 1
@@ -156,6 +170,7 @@ def room_physics_loop(room_code):
                                 enemy['x'] -= 10
                             else:
                                 enemy['x'] += 10
+
         time.sleep(1 / FPS)
 
 
@@ -163,6 +178,7 @@ def handle_client(conn, addr):
     player_id, room_code = None, None
     try:
         initial_data = pickle.loads(conn.recv(BUFFER_SIZE))
+
         if initial_data[0] == "CREATE":
             room_code = generate_room_code()
             rooms[room_code] = {
@@ -182,11 +198,13 @@ def handle_client(conn, addr):
                 rooms[room_code]['players'][player_id] = {'char': None, 'team': team, 'x': 0, 'y': 0}
                 conn.send(pickle.dumps(("SUCCESS", room_code, player_id, team)))
             else:
-                conn.send(pickle.dumps(("ERROR", "Sala indisponível."))); return
+                conn.send(pickle.dumps(("ERROR", "Sala indisponível.")))
+                return
 
         while True:
             client_data = pickle.loads(conn.recv(BUFFER_SIZE))
             if not client_data: break
+
             room = rooms[room_code]
             player = room['players'][player_id]
 
@@ -203,22 +221,26 @@ def handle_client(conn, addr):
                     for p_data in room['players'].values():
                         p_data['x'] = 200 if p_data['team'] == 1 else WIDTH - 250
                         p_data['y'] = GROUND_Y - CHAR_H
-                        # Adicionado stun_timer e dash_timer ao zerar
+
+                        # Zera todos os timers e status
                         keys_to_reset = ['invisible_timer', 'ear_timer', 'clone_timer', 'cookie_buff_timer',
                                          'jackpot_timer', 'jump_buff_timer', 'throw_buff_timer',
                                          'jump_debuff_timer', 'speed_debuff_timer', 'throw_debuff_timer',
-                                         'stun_timer', 'dash_timer']
-                        for k in keys_to_reset: p_data[k] = 0
-                        p_data['roleta_state'] = 'IDLE';
-                        p_data['roleta_result'] = None;
-                        p_data['roleta_timer'] = 0
+                                         'stun_timer', 'dash_timer', 'roleta_timer']
+                        for k in keys_to_reset:
+                            p_data[k] = 0
+
+                        p_data['roleta_state'] = 'IDLE'
+                        p_data['roleta_result'] = None
+                        p_data['dash_dir'] = 1
+
                     threading.Thread(target=room_physics_loop, args=(room_code,)).start()
+
             else:
+                # O servidor aceita a movimentação apenas se o jogador não estiver no meio do dash
                 if 'x' in client_data and player.get('roleta_state') != 'CUTSCENE':
-                    # O servidor ignora o X do cliente se ele estiver dando dash, para não bugar a investida
                     if player.get('dash_timer', 0) <= 0:
                         player['x'] = client_data['x']
-                    # Aceitamos sempre o Y para que a gravidade local (pulo) funcione fluidamente
                     player['y'] = client_data['y']
 
                 action = client_data.get('action')
@@ -234,6 +256,7 @@ def handle_client(conn, addr):
                         power += 10
                     elif player.get('throw_debuff_timer', 0) > 0:
                         power -= 10
+
                     room['ball']['vel_x'] = math.cos(angle) * power
                     room['ball']['vel_y'] = math.sin(angle) * power
                     room['ball']['holder'] = None
@@ -241,11 +264,9 @@ def handle_client(conn, addr):
 
                 elif action == 'USE_ABILITY' and player.get('roleta_state') != 'CUTSCENE':
                     char = player['char']
-                    # --- NOVO PODER DO HENRIQUE: Aplica o Dash no servidor ---
                     if char == "Henrique":
-                        player['dash_timer'] = 12  # Dura 12 frames (rapidíssimo)
+                        player['dash_timer'] = 12
                         player['dash_dir'] = client_data.get('facing', 1)
-
                     elif char == "Natan":
                         player['invisible_timer'] = 180
                     elif char == "Presscinotti":
@@ -257,10 +278,12 @@ def handle_client(conn, addr):
                         player['clone_timer'] = 300
                     elif char == "Paulo" and player.get('roleta_state') == 'IDLE' and player.get('jackpot_timer',
                                                                                                  0) <= 0:
-                        player['roleta_state'] = 'SPINNING';
+                        player['roleta_state'] = 'SPINNING'
                         player['roleta_timer'] = 120
 
+            # Envia a sala atualizada de volta pro cliente
             conn.send(pickle.dumps(room))
+
     except Exception as e:
         pass
     finally:

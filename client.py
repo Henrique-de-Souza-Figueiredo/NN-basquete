@@ -47,7 +47,7 @@ class GameClient:
         self.speed, self.jump_power, self.gravity = 6, -16, 0.8
 
         self.ability_cooldown = 0
-        self.facing = 1  # Adicionado: 1 = Direita, -1 = Esquerda (Necessário para o Dash)
+        self.facing = 1  # 1 = Direita, -1 = Esquerda (Necessário para o Dash)
 
         self.btn_create = Button("CRIAR SALA", WIDTH // 2 - 220, 400, 200, 60, TEAM_1_COLOR)
         self.btn_join = Button("ENTRAR", WIDTH // 2 + 20, 400, 200, 60, TEAM_2_COLOR)
@@ -116,19 +116,20 @@ class GameClient:
             for pid, p_data in self.server_data['players'].items():
                 p_team_color = TEAM_1_COLOR if p_data['team'] == 1 else TEAM_2_COLOR
                 p_char = p_data['char'] if p_data['char'] else "Escolhendo..."
-                p_text = f"P{pid}: {p_char}";
-                if pid == self.my_id: p_text += " (Você)"; pygame.draw.rect(screen, (255, 255, 0), (45, y_pos, 250, 30),
-                                                                            1)
+                p_text = f"P{pid}: {p_char}"
+                if pid == self.my_id:
+                    p_text += " (Você)"
+                    pygame.draw.rect(screen, (255, 255, 0), (45, y_pos, 250, 30), 1)
                 txt_surf = font_sm.render(p_text, True, p_team_color)
-                screen.blit(txt_surf, (50, y_pos + 5));
+                screen.blit(txt_surf, (50, y_pos + 5))
                 y_pos += 35
-        total_width = (self.card_w * 8) + (10 * 7);
-        start_x = (WIDTH - total_width) // 2;
+        total_width = (self.card_w * 8) + (10 * 7)
+        start_x = (WIDTH - total_width) // 2
         start_y = 180
-        self.char_rects = [];
+        self.char_rects = []
         hovered_char = None
         for i, name in enumerate(CHARACTERS):
-            x = start_x + i * (self.card_w + 10);
+            x = start_x + i * (self.card_w + 10)
             rect = pygame.Rect(x, start_y, self.card_w, self.card_h)
             self.char_rects.append(rect)
             is_taken = False
@@ -143,15 +144,17 @@ class GameClient:
                 screen.blit(name_txt, (x + 10, start_y + self.card_h // 2))
             if is_taken:
                 dark_surface = pygame.Surface((self.card_w, self.card_h), pygame.SRCALPHA)
-                dark_surface.fill((0, 0, 0, 180));
+                dark_surface.fill((0, 0, 0, 180))
                 screen.blit(dark_surface, (x, start_y))
                 taken_txt = font_sm.render("EM USO", True, (255, 50, 50))
                 screen.blit(taken_txt, (x + self.card_w // 2 - taken_txt.get_width() // 2, start_y + self.card_h // 2))
             if i == self.selected_char_idx: pygame.draw.rect(screen, (255, 215, 0), rect, 5)
-            if rect.collidepoint(mouse_pos): hovered_char = name; pygame.draw.rect(screen, WHITE, rect, 2)
+            if rect.collidepoint(mouse_pos):
+                hovered_char = name
+                pygame.draw.rect(screen, WHITE, rect, 2)
         char_to_show = hovered_char if hovered_char else CHARACTERS[self.selected_char_idx]
         panel_rect = pygame.Rect(0, HEIGHT - 120, WIDTH, 120)
-        pygame.draw.rect(screen, (20, 20, 25), panel_rect);
+        pygame.draw.rect(screen, (20, 20, 25), panel_rect)
         pygame.draw.rect(screen, (50, 50, 60), panel_rect, 3)
         desc_title = font_title.render(char_to_show.upper(), True, CHARACTERS_INFO[char_to_show]["color"])
         screen.blit(desc_title, (50, HEIGHT - 100))
@@ -167,7 +170,7 @@ class GameClient:
         paulo_img = self.jackpot_img if self.jackpot_img else self.char_images.get("Paulo")
         if paulo_img:
             dancer = pygame.transform.flip(paulo_img, True, False) if (
-                                                                              pygame.time.get_ticks() // 150) % 2 == 0 else paulo_img
+                                                                                  pygame.time.get_ticks() // 150) % 2 == 0 else paulo_img
             screen.blit(dancer, (WIDTH // 2 - self.card_w // 2, HEIGHT // 2 - self.card_h // 2))
         dance_txt = font_md.render("* Dança da Vitória *", True, WHITE)
         screen.blit(dance_txt, (WIDTH // 2 - dance_txt.get_width() // 2, HEIGHT - 100))
@@ -269,26 +272,6 @@ class GameClient:
         am_i_jackpot = my_p_data.get('jackpot_timer', 0) > 0
         r_state = my_p_data.get('roleta_state', 'IDLE')
 
-        if r_state == 'SPINNING':
-            box_color = (random.randint(100, 255), random.randint(100, 255), 0)
-            pygame.draw.rect(screen, box_color, (WIDTH // 2 - 150, 100, 300, 60), border_radius=10)
-            spin_txt = font_md.render("GIRANDO ROLETA...", True, BLACK)
-            screen.blit(spin_txt, (WIDTH // 2 - spin_txt.get_width() // 2, 115))
-        elif r_state == 'FINISHED':
-            outcome = my_p_data.get('roleta_result', '')
-            res_color = WHITE
-            if "BUFF" in outcome:
-                res_color = (50, 255, 50)
-            elif "DEBUFF" in outcome:
-                res_color = (255, 50, 50)
-            elif "JACKPOT" in outcome:
-                res_color = (255, 215, 0)
-
-            res_txt = font_lg.render(outcome.replace("_", " "), True, res_color)
-            res_shadow = font_lg.render(outcome.replace("_", " "), True, BLACK)
-            screen.blit(res_shadow, (WIDTH // 2 - res_txt.get_width() // 2 + 2, 102))
-            screen.blit(res_txt, (WIDTH // 2 - res_txt.get_width() // 2, 100))
-
         score = self.server_data['score']
         score_text = font_lg.render(f"{score[0]} x {score[1]}", True, WHITE)
         pygame.draw.rect(screen, BLACK, (WIDTH // 2 - 100, 10, 200, 70), border_radius=15)
@@ -350,6 +333,30 @@ class GameClient:
 
             name_tag = font_sm.render(p_data['char'], True, WHITE)
             screen.blit(name_tag, (p_data['x'] + 15 - name_tag.get_width() // 2, p_data['y'] - 25))
+
+            # ==========================================
+            # NOVO BLOCO DA ROLETA (APARECE PARA TODOS)
+            # ==========================================
+            p_r_state = p_data.get('roleta_state', 'IDLE')
+            if p_r_state == 'SPINNING':
+                box_color = (random.randint(100, 255), random.randint(100, 255), 0)
+                pygame.draw.rect(screen, box_color, (p_data['x'] - 25, p_data['y'] - 60, 80, 25), border_radius=5)
+                spin_txt = font_sm.render("ROLETA", True, BLACK)
+                screen.blit(spin_txt, (p_data['x'] + 15 - spin_txt.get_width() // 2, p_data['y'] - 58))
+
+            elif p_r_state == 'FINISHED':
+                outcome = p_data.get('roleta_result', '')
+                if outcome:
+                    if "JACKPOT" in outcome:
+                        res_color = (255, 215, 0)
+                    elif "BUFF" in outcome:
+                        res_color = (50, 255, 50)
+                    else:
+                        res_color = (255, 50, 50)
+
+                    res_txt = font_sm.render(outcome.replace("_", " "), True, res_color)
+                    screen.blit(res_txt, (p_data['x'] + 15 - res_txt.get_width() // 2, p_data['y'] - 60))
+            # ==========================================
 
         ball = self.server_data['ball']
         pygame.draw.circle(screen, BALL_COLOR, (int(ball['x']), int(ball['y'])), 10)
@@ -565,7 +572,14 @@ class GameClient:
             elif self.state == "LOBBY":
                 self.draw_lobby()
             elif self.state == "PLAYING":
-                if self.server_data and self.server_data['players'][self.my_id].get('roleta_state') == 'CUTSCENE':
+                alguem_em_cutscene = False
+                if self.server_data:
+                    for p in self.server_data['players'].values():
+                        if p.get('roleta_state') == 'CUTSCENE':
+                            alguem_em_cutscene = True
+                            break
+
+                if alguem_em_cutscene:
                     self.draw_cutscene()
                 else:
                     self.draw_game()
@@ -578,4 +592,6 @@ class GameClient:
         sys.exit()
 
 
-if __name__ == "__main__": game = GameClient(); game.run()
+if __name__ == "__main__":
+    game = GameClient()
+    game.run()
