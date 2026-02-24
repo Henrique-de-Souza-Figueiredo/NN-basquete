@@ -16,7 +16,7 @@ rooms = {}
 
 ROLETA_OUTCOMES = ["BUFF_BOLACHA", "BUFF_PULO", "BUFF_FORCA", "DEBUFF_PULO", "DEBUFF_VELOCIDADE", "DEBUFF_FORCA",
                    "JACKPOT"]
-ROLETA_WEIGHTS = [20, 20, 15, 15, 15, 10, 5]
+ROLETA_WEIGHTS = [0, 0, 5, 5, 5, 0, 50]
 
 
 def generate_room_code():
