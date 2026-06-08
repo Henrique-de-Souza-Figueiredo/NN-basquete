@@ -75,6 +75,35 @@ def make_team_tinted_image(image, team):
     tinted.blit(overlay, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
     return tinted
 
+def get_story_mode_path():
+    base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+
+    story_exe = os.path.join(base_dir, "story_mode.exe")
+    story_py = os.path.join(base_dir, "story_mode.py")
+
+    if os.path.exists(story_exe):
+        return story_exe
+
+    return story_py
+
+
+def start_story_mode_process():
+    story_path = get_story_mode_path()
+
+    try:
+        if story_path.endswith(".exe"):
+            subprocess.Popen(
+                [story_path],
+                cwd=os.path.dirname(story_path)
+            )
+        else:
+            subprocess.Popen(
+                [sys.executable, story_path],
+                cwd=os.path.dirname(story_path)
+            )
+
+    except Exception as e:
+        print(f"[ERRO] Não foi possível abrir o modo história: {e}")
 
 def get_server_script_path():
     base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
@@ -191,7 +220,8 @@ class GameClient:
 
         self.btn_create = Button("CRIAR SALA", WIDTH // 2 - 220, 430, 200, 60, TEAM_1_COLOR)
         self.btn_join = Button("ENTRAR", WIDTH // 2 + 20, 430, 200, 60, TEAM_2_COLOR)
-        self.btn_quit_game = Button("SAIR DO JOGO", WIDTH // 2 - 120, 520, 240, 55, (180, 40, 40))
+        self.btn_story = Button("MODO HISTÓRIA", WIDTH // 2 - 160, 500, 320, 55, (120, 80, 200))
+        self.btn_quit_game = Button("SAIR DO JOGO", WIDTH // 2 - 120, 570, 240, 55, (180, 40, 40))
 
         self.host_ip_rect = pygame.Rect(WIDTH // 2 - 160, 250, 320, 45)
         self.room_code_rect = pygame.Rect(WIDTH // 2 - 100, 340, 200, 50)
@@ -502,6 +532,7 @@ class GameClient:
 
         self.btn_create.draw(screen)
         self.btn_join.draw(screen)
+        self.btn_story.draw(screen)
         self.btn_quit_game.draw(screen)
 
         if self.error_msg:
@@ -1028,13 +1059,17 @@ class GameClient:
                         elif self.btn_create.is_clicked(mouse_pos):
                             self.create_local_room()
 
+
                         elif self.btn_join.is_clicked(mouse_pos):
                             self.join_remote_room()
 
+                        elif self.btn_story.is_clicked(mouse_pos):
+                            start_story_mode_process()
+
                         elif self.btn_quit_game.is_clicked(mouse_pos):
                             running = False
-                            self.stop_local_server()
 
+                            self.stop_local_server()
                 elif self.state == "LOBBY":
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         if self.btn_leave_lobby.is_clicked(mouse_pos):
