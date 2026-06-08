@@ -2,6 +2,7 @@ import pygame
 import sys
 import os
 import math
+import tkinter as tk
 import random
 import copy
 import subprocess
@@ -11,6 +12,7 @@ from config import *
 from network import Network, load_server_config, save_server_config
 
 pygame.init()
+
 
 try:
     pygame.mixer.init()
@@ -38,8 +40,6 @@ def get_image_path(filename):
 def normalize_audio_name(char_name):
     name = char_name.lower().replace(" ", "").replace("_", "")
 
-    # Caso seu config.py esteja com "John Jonh",
-    # mas os arquivos estejam como goljohnjohn1.mp3 etc.
     if name == "johnjonh":
         return "johnjohn"
 
@@ -77,11 +77,6 @@ def make_team_tinted_image(image, team):
 
 
 def get_server_script_path():
-    """
-    Retorna o caminho do server.py ou server.exe.
-    Quando estiver rodando como .py, usa server.py.
-    Quando virar .exe, você pode deixar um server.exe do lado.
-    """
     base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
 
     server_exe = os.path.join(base_dir, "server.exe")
@@ -94,10 +89,6 @@ def get_server_script_path():
 
 
 def start_local_server_process():
-    """
-    Inicia o servidor local automaticamente.
-    Usado por quem clicar em CRIAR SALA.
-    """
     server_path = get_server_script_path()
 
     try:
@@ -115,6 +106,29 @@ def start_local_server_process():
     except Exception as e:
         print(f"[ERRO] Não foi possível iniciar o servidor local: {e}")
         return None
+
+
+def get_clipboard_text():
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        text = root.clipboard_get()
+        root.destroy()
+        return text.strip()
+    except Exception:
+        return ""
+
+
+def set_clipboard_text(text):
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.clipboard_clear()
+        root.clipboard_append(text)
+        root.update()
+        root.destroy()
+    except Exception:
+        pass
 
 
 class Button:
@@ -167,7 +181,6 @@ class GameClient:
         self.ability_cooldown = 0
         self.facing = 1
 
-        # Replay em câmera lenta
         self.replay_buffer = deque(maxlen=180)
         self.replay_playing = False
         self.replay_frames = []
@@ -176,7 +189,6 @@ class GameClient:
         self.last_replay_id = 0
         self.current_goal_sound = None
 
-        # Botões do menu
         self.btn_create = Button("CRIAR SALA", WIDTH // 2 - 220, 430, 200, 60, TEAM_1_COLOR)
         self.btn_join = Button("ENTRAR", WIDTH // 2 + 20, 430, 200, 60, TEAM_2_COLOR)
         self.btn_quit_game = Button("SAIR DO JOGO", WIDTH // 2 - 120, 520, 240, 55, (180, 40, 40))
@@ -184,15 +196,12 @@ class GameClient:
         self.host_ip_rect = pygame.Rect(WIDTH // 2 - 160, 250, 320, 45)
         self.room_code_rect = pygame.Rect(WIDTH // 2 - 100, 340, 200, 50)
 
-        # Botões do lobby/jogo
         self.btn_start_game = Button("INICIAR", WIDTH - 220, 20, 200, 60, BALL_COLOR)
         self.btn_team_blue = Button("TIME AZUL", 50, 80, 180, 40, TEAM_1_COLOR)
         self.btn_team_red = Button("TIME VERM.", 240, 80, 180, 40, TEAM_2_COLOR)
 
         self.btn_leave_lobby = Button("SAIR DA SALA", WIDTH - 240, HEIGHT - 70, 220, 50, (180, 40, 40))
         self.btn_leave_match = Button("SAIR", WIDTH - 130, 15, 110, 45, (180, 40, 40))
-
-        # Botão de votação para pular replay
         self.btn_skip_replay = Button("SKIP", WIDTH - 150, HEIGHT - 70, 130, 50, (220, 170, 40), BLACK)
 
         self.btn_exit = Button("VOLTAR AO MENU", WIDTH // 2 - 130, HEIGHT - 100, 260, 60, (220, 50, 50))
@@ -269,9 +278,6 @@ class GameClient:
             self.is_local_host = False
 
     def create_local_room(self):
-        """
-        Inicia o server.py automaticamente e conecta nele em 127.0.0.1.
-        """
         if self.local_server_process is None:
             self.local_server_process = start_local_server_process()
             self.is_local_host = True
@@ -282,9 +288,6 @@ class GameClient:
         self.handle_connection(response)
 
     def join_remote_room(self):
-        """
-        Entra em uma sala usando IP Radmin do host + código.
-        """
         host = self.host_ip.strip()
         code = self.room_code.strip().upper()
 
@@ -368,11 +371,9 @@ class GameClient:
         replay_id = self.server_data.get("replay_id", 0)
         replay_timer = self.server_data.get("replay_timer", 0)
 
-        # Se o servidor encerrou o replay por votação ou tempo
         if self.replay_playing and replay_timer <= 0:
             self.stop_replay_local()
 
-            # Sincroniza posição real do servidor para não teleportar para posição antiga
             if self.server_data and self.my_id in self.server_data.get("players", {}):
                 my_data = self.server_data["players"][self.my_id]
                 self.player_x = my_data["x"]
@@ -463,7 +464,6 @@ class GameClient:
         title = font_lg.render("NN LEAGUE", True, BLACK)
         screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 70))
 
-        # Campo IP do host
         ip_label = font_sm.render("IP Radmin do host:", True, BLACK)
         screen.blit(ip_label, (self.host_ip_rect.x, self.host_ip_rect.y - 25))
 
@@ -475,7 +475,6 @@ class GameClient:
         ip_text = font_md.render(self.host_ip, True, BLACK)
         screen.blit(ip_text, (self.host_ip_rect.x + 10, self.host_ip_rect.y + 6))
 
-        # Campo código da sala
         code_label = font_sm.render("Código da sala:", True, BLACK)
         screen.blit(code_label, (self.room_code_rect.x, self.room_code_rect.y - 25))
 
@@ -495,9 +494,11 @@ class GameClient:
 
         hint1 = font_sm.render("Criar sala: inicia servidor neste PC automaticamente.", True, BLACK)
         hint2 = font_sm.render("Entrar: use o IP Radmin do host + código da sala.", True, BLACK)
+        hint3 = font_sm.render("Dica: Ctrl+V cola o IP ou código no campo selecionado.", True, BLACK)
 
         screen.blit(hint1, (WIDTH // 2 - hint1.get_width() // 2, 395))
         screen.blit(hint2, (WIDTH // 2 - hint2.get_width() // 2, 615))
+        screen.blit(hint3, (WIDTH // 2 - hint3.get_width() // 2, 645))
 
         self.btn_create.draw(screen)
         self.btn_join.draw(screen)
@@ -692,7 +693,6 @@ class GameClient:
 
         pygame.draw.line(screen, WHITE, (WIDTH // 2, HEIGHT - 60), (WIDTH // 2, HEIGHT), 5)
 
-        # Cesta esquerda
         pygame.draw.rect(screen, GRAY, (80, HEIGHT - 360, 15, 300))
         pygame.draw.rect(screen, WHITE, (75, HEIGHT - 410, 20, 100))
         pygame.draw.rect(screen, TEAM_1_COLOR, (75, HEIGHT - 410, 20, 100), 3)
@@ -703,7 +703,6 @@ class GameClient:
         pygame.draw.line(screen, WHITE, (110, HEIGHT - 332), (130, HEIGHT - 290), 2)
         pygame.draw.line(screen, WHITE, (130, HEIGHT - 332), (110, HEIGHT - 290), 2)
 
-        # Cesta direita
         pygame.draw.rect(screen, GRAY, (WIDTH - 95, HEIGHT - 360, 15, 300))
         pygame.draw.rect(screen, WHITE, (WIDTH - 95, HEIGHT - 410, 20, 100))
         pygame.draw.rect(screen, TEAM_2_COLOR, (WIDTH - 95, HEIGHT - 410, 20, 100), 3)
@@ -745,7 +744,6 @@ class GameClient:
 
             color = TEAM_1_COLOR if p_data["team"] == 1 else TEAM_2_COLOR
 
-            # Clone Miguel
             if p_data.get("clone_timer", 0) > 0:
                 clone_x = p_data.get("clone_x", p_data["x"] - p_data.get("facing", 1) * 75)
                 clone_y = p_data.get("clone_y", p_data["y"])
@@ -792,7 +790,6 @@ class GameClient:
 
             self.draw_player_image(p_data, color)
 
-            # Orelhas Presscinotti
             if p_data.get("ear_timer", 0) > 0:
                 pygame.draw.rect(screen, (255, 200, 150), (p_data["x"] - 32, p_data["y"] + 5, 32, CHAR_H - 10))
                 pygame.draw.rect(screen, (255, 200, 150), (p_data["x"] + CHAR_W, p_data["y"] + 5, 32, CHAR_H - 10))
@@ -973,24 +970,53 @@ class GameClient:
 
                 elif self.state == "MENU":
                     if event.type == pygame.KEYDOWN:
-                        if self.active_input == "room":
-                            if event.key == pygame.K_BACKSPACE:
-                                self.room_code = self.room_code[:-1]
+                        ctrl_pressed = pygame.key.get_mods() & pygame.KMOD_CTRL
 
-                            elif len(self.room_code) < 4 and event.unicode.isalnum():
-                                self.room_code += event.unicode.upper()
+                        if ctrl_pressed and event.key == pygame.K_v:
+                            pasted_text = get_clipboard_text()
 
-                        elif self.active_input == "host":
-                            if event.key == pygame.K_BACKSPACE:
-                                self.host_ip = self.host_ip[:-1]
-
-                            elif len(self.host_ip) < 40:
+                            if self.active_input == "host":
                                 allowed_chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:"
-                                if event.unicode in allowed_chars:
-                                    self.host_ip += event.unicode
+                                clean_text = "".join(ch for ch in pasted_text if ch in allowed_chars)
+                                self.host_ip = clean_text[:40]
 
-                        if event.key == pygame.K_TAB:
-                            self.active_input = "host" if self.active_input == "room" else "room"
+                            elif self.active_input == "room":
+                                clean_text = "".join(ch for ch in pasted_text.upper() if ch.isalnum())
+                                self.room_code = clean_text[:4]
+
+                        elif ctrl_pressed and event.key == pygame.K_c:
+                            if self.active_input == "host":
+                                set_clipboard_text(self.host_ip)
+
+                            elif self.active_input == "room":
+                                set_clipboard_text(self.room_code)
+
+                        elif ctrl_pressed and event.key == pygame.K_a:
+                            if self.active_input == "host":
+                                self.host_ip = ""
+
+                            elif self.active_input == "room":
+                                self.room_code = ""
+
+                        else:
+                            if self.active_input == "room":
+                                if event.key == pygame.K_BACKSPACE:
+                                    self.room_code = self.room_code[:-1]
+
+                                elif len(self.room_code) < 4 and event.unicode.isalnum():
+                                    self.room_code += event.unicode.upper()
+
+                            elif self.active_input == "host":
+                                if event.key == pygame.K_BACKSPACE:
+                                    self.host_ip = self.host_ip[:-1]
+
+                                elif len(self.host_ip) < 40:
+                                    allowed_chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:"
+                                    if event.unicode in allowed_chars:
+                                        self.host_ip += event.unicode
+
+                            if event.key == pygame.K_TAB:
+                                self.active_input = "host" if self.active_input == "room" else "room"
 
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         if self.host_ip_rect.collidepoint(mouse_pos):
