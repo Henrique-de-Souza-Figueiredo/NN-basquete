@@ -10,8 +10,10 @@ import time
 from collections import deque
 from config import *
 from network import Network, load_server_config, save_server_config
+import save_db
 
 pygame.init()
+save_db.init_db()
 
 
 try:
@@ -61,6 +63,195 @@ def find_goal_audio(char_name):
             return path
 
     return None
+
+
+def get_throw_power(player_data):
+    power = 25
+
+    if player_data.get("char") == "Rafael":
+        power = 35
+
+    if player_data.get("jackpot_timer", 0) > 0:
+        power += 15
+    elif player_data.get("throw_buff_timer", 0) > 0:
+        power += 10
+    elif player_data.get("throw_debuff_timer", 0) > 0:
+        power -= 10
+
+    return power
+
+
+def resolve_circle_point_collision(ball, point_x, point_y, radius, bounce=0.78):
+    dx = ball["x"] - point_x
+    dy = ball["y"] - point_y
+    dist = math.hypot(dx, dy)
+    min_dist = BALL_RAD + radius
+
+    if dist <= 0 or dist >= min_dist:
+        return
+
+    nx = dx / dist
+    ny = dy / dist
+    dot = ball["vel_x"] * nx + ball["vel_y"] * ny
+
+    ball["x"] = point_x + nx * min_dist
+    ball["y"] = point_y + ny * min_dist
+
+    if dot < 0:
+        ball["vel_x"] -= (1 + bounce) * dot * nx
+        ball["vel_y"] -= (1 + bounce) * dot * ny
+
+
+def resolve_circle_rect_collision(ball, rect, bounce=0.75):
+    rx, ry, rw, rh = rect
+    closest_x = max(rx, min(ball["x"], rx + rw))
+    closest_y = max(ry, min(ball["y"], ry + rh))
+    dx = ball["x"] - closest_x
+    dy = ball["y"] - closest_y
+    dist = math.hypot(dx, dy)
+
+    if dist <= 0 or dist >= BALL_RAD:
+        return
+
+    nx = dx / dist
+    ny = dy / dist
+    dot = ball["vel_x"] * nx + ball["vel_y"] * ny
+
+    ball["x"] = closest_x + nx * BALL_RAD
+    ball["y"] = closest_y + ny * BALL_RAD
+
+    if dot < 0:
+        ball["vel_x"] -= (1 + bounce) * dot * nx
+        ball["vel_y"] -= (1 + bounce) * dot * ny
+
+
+def resolve_hoop_collisions(ball):
+    for rim_x in (LEFT_HOOP_X1, LEFT_HOOP_X2, RIGHT_HOOP_X1, RIGHT_HOOP_X2):
+        resolve_circle_point_collision(ball, rim_x, HOOP_Y, HOOP_RIM_RAD)
+
+    resolve_circle_rect_collision(ball, (LEFT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+    resolve_circle_rect_collision(ball, (RIGHT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+
+
+def get_attack_hoop(team):
+    if team == 1:
+        return (RIGHT_HOOP_X1 + RIGHT_HOOP_X2) / 2, HOOP_Y
+
+    return (LEFT_HOOP_X1 + LEFT_HOOP_X2) / 2, HOOP_Y
+
+
+def can_start_dunk_locally(player_data, ball):
+    if ball.get("holder") is None:
+        return False
+
+    if player_data.get("dunk_active", 0) > 0:
+        return False
+
+    if player_data.get("stun_timer", 0) > 0 or player_data.get("knockback_timer", 0) > 0:
+        return False
+
+    if player_data["y"] >= GROUND_Y - CHAR_H - 4:
+        return False
+
+    hoop_x, hoop_y = get_attack_hoop(player_data["team"])
+    player_cx = player_data["x"] + CHAR_W / 2
+    player_cy = player_data["y"] + CHAR_H / 2
+
+    return (
+        abs(player_cx - hoop_x) <= DUNK_RANGE_X
+        and abs(player_cy - hoop_y) <= DUNK_RANGE_Y
+    )
+
+
+def qte_key_from_event(event):
+    if event.key == pygame.K_w:
+        return "W"
+
+    if event.key == pygame.K_a:
+        return "A"
+
+    if event.key == pygame.K_s:
+        return "S"
+
+    if event.key == pygame.K_d:
+        return "D"
+
+    return None
+
+
+ABILITY_ACHIEVEMENTS = {
+    "Henrique": "henrique_dash",
+    "Natan": "natan_ghost",
+    "Presscinotti": "press_wall",
+    "Rafael": "rafael_arc",
+    "Miguel": "miguel_shadow",
+    "John Jonh": "john_float",
+    "Diogo": "diogo_cookie",
+    "Paulo": "paulo_spin",
+}
+
+
+def draw_skin_overlay(surface, x, y, w, h, skin_id, scale=1.0):
+    cosmetic = COSMETICS.get(skin_id)
+
+    if not cosmetic or skin_id == "default":
+        return
+
+    color = cosmetic["color"]
+    accent = cosmetic["accent"]
+    torso = pygame.Rect(x + int(w * 0.12), y + int(h * 0.32), int(w * 0.76), int(h * 0.36))
+    shorts = pygame.Rect(x + int(w * 0.18), y + int(h * 0.66), int(w * 0.64), int(h * 0.18))
+
+    pygame.draw.rect(surface, color, torso, border_radius=max(2, int(6 * scale)))
+    pygame.draw.rect(surface, accent, shorts, border_radius=max(2, int(5 * scale)))
+    pygame.draw.line(surface, accent, (torso.left, torso.top), (torso.right, torso.top), max(1, int(3 * scale)))
+
+    if skin_id in ["blue_star", "gold_royal"]:
+        pygame.draw.circle(surface, accent, torso.center, max(2, int(w * 0.09)))
+
+    if skin_id == "shadow":
+        pygame.draw.line(surface, accent, (torso.left, torso.bottom), (torso.right, torso.top), max(1, int(3 * scale)))
+
+
+def predict_ball_path(ball, target_x, target_y, power, steps=180):
+    angle = math.atan2(target_y - ball["y"], target_x - ball["x"])
+    x = ball["x"]
+    y = ball["y"] - 10
+    vel_x = math.cos(angle) * power
+    vel_y = math.sin(angle) * power
+    points = [(int(x), int(y))]
+
+    for _ in range(steps):
+        vel_y += GRAVITY
+        x += vel_x
+        y += vel_y
+
+        if y >= GROUND_Y - BALL_RAD:
+            y = GROUND_Y - BALL_RAD
+            vel_y *= -0.7
+            vel_x *= 0.9
+
+        if x <= BALL_RAD:
+            x = BALL_RAD
+            vel_x *= -0.8
+
+        if x >= WIDTH - BALL_RAD:
+            x = WIDTH - BALL_RAD
+            vel_x *= -0.8
+
+        temp_ball = {"x": x, "y": y, "vel_x": vel_x, "vel_y": vel_y}
+        resolve_hoop_collisions(temp_ball)
+        x = temp_ball["x"]
+        y = temp_ball["y"]
+        vel_x = temp_ball["vel_x"]
+        vel_y = temp_ball["vel_y"]
+
+        points.append((int(x), int(y)))
+
+        if abs(vel_x) < 0.35 and abs(vel_y) < 1 and y >= GROUND_Y - BALL_RAD - 1:
+            break
+
+    return points
 
 
 def make_team_tinted_image(image, team):
@@ -216,12 +407,24 @@ class GameClient:
         self.replay_index = 0
         self.replay_tick = 0
         self.last_replay_id = 0
+        self.reward_applied_for_replay_id = None
+        self.reward_message = ""
         self.current_goal_sound = None
+        self.reward_applied_for_replay_id = None
+        self.reward_message = ""
+        self.shop_selected_skin = "default"
+        self.shop_message = ""
+        self.achievements_scroll = 0
+        self.last_seen_clash_id = None
+        self.last_dunk_ready_state = 0
 
         self.btn_create = Button("CRIAR SALA", WIDTH // 2 - 220, 430, 200, 60, TEAM_1_COLOR)
         self.btn_join = Button("ENTRAR", WIDTH // 2 + 20, 430, 200, 60, TEAM_2_COLOR)
-        self.btn_story = Button("MODO HISTÓRIA", WIDTH // 2 - 160, 500, 320, 55, (120, 80, 200))
-        self.btn_quit_game = Button("SAIR DO JOGO", WIDTH // 2 - 120, 570, 240, 55, (180, 40, 40))
+        self.btn_story = Button("MODO HISTÓRIA", WIDTH // 2 - 330, 500, 300, 55, (120, 80, 200))
+        self.btn_shop = Button("LOJA", WIDTH // 2 + 30, 500, 300, 55, (60, 150, 120))
+        self.btn_stats = Button("ESTATISTICAS", WIDTH // 2 - 330, 560, 300, 50, (80, 110, 180))
+        self.btn_achievements = Button("ACHIEVMENTS", WIDTH // 2 + 30, 560, 300, 50, (170, 130, 55))
+        self.btn_quit_game = Button("SAIR DO JOGO", WIDTH // 2 - 120, 625, 240, 45, (180, 40, 40))
 
         self.host_ip_rect = pygame.Rect(WIDTH // 2 - 160, 250, 320, 45)
         self.room_code_rect = pygame.Rect(WIDTH // 2 - 100, 340, 200, 50)
@@ -235,6 +438,11 @@ class GameClient:
         self.btn_skip_replay = Button("SKIP", WIDTH - 150, HEIGHT - 70, 130, 50, (220, 170, 40), BLACK)
 
         self.btn_exit = Button("VOLTAR AO MENU", WIDTH // 2 - 130, HEIGHT - 100, 260, 60, (220, 50, 50))
+        self.btn_shop_back = Button("VOLTAR", 40, HEIGHT - 75, 180, 55, (180, 40, 40))
+        self.btn_shop_buy = Button("COMPRAR", WIDTH - 270, HEIGHT - 150, 220, 55, (70, 170, 90))
+        self.btn_shop_equip = Button("EQUIPAR", WIDTH - 270, HEIGHT - 85, 220, 55, TEAM_1_COLOR)
+        self.btn_stats_back = Button("VOLTAR", 40, HEIGHT - 75, 180, 55, (180, 40, 40))
+        self.btn_achievements_back = Button("VOLTAR", 40, HEIGHT - 75, 180, 55, (180, 40, 40))
 
         self.char_images = {}
         self.small_char_images = {}
@@ -456,13 +664,14 @@ class GameClient:
 
         score_team = current_data.get("last_score_team") if current_data else None
         score_char = current_data.get("last_score_char") if current_data else None
+        score_points = current_data.get("last_score_points", 2) if current_data else 2
 
         if score_team == 1:
-            cesta_txt = font_md.render("CESTA DO TIME AZUL!", True, TEAM_1_COLOR)
+            cesta_txt = font_md.render(f"CESTA DO TIME AZUL! +{score_points}", True, TEAM_1_COLOR)
         elif score_team == 2:
-            cesta_txt = font_md.render("CESTA DO TIME VERMELHO!", True, TEAM_2_COLOR)
+            cesta_txt = font_md.render(f"CESTA DO TIME VERMELHO! +{score_points}", True, TEAM_2_COLOR)
         else:
-            cesta_txt = font_md.render("CESTA!", True, WHITE)
+            cesta_txt = font_md.render(f"CESTA! +{score_points}", True, WHITE)
 
         screen.blit(cesta_txt, (WIDTH // 2 - cesta_txt.get_width() // 2, 90))
 
@@ -533,11 +742,273 @@ class GameClient:
         self.btn_create.draw(screen)
         self.btn_join.draw(screen)
         self.btn_story.draw(screen)
+        self.btn_shop.draw(screen)
+        self.btn_stats.draw(screen)
+        self.btn_achievements.draw(screen)
         self.btn_quit_game.draw(screen)
+
+        money_txt = font_md.render(f"Dinheiro: ${save_db.get_money()}", True, BLACK)
+        screen.blit(money_txt, (20, 20))
 
         if self.error_msg:
             err = font_sm.render(self.error_msg, True, (200, 0, 0))
             screen.blit(err, (WIDTH // 2 - err.get_width() // 2, 585))
+
+    def draw_character_preview(self, char_name, skin_id, x, y, w, h):
+        img = self.char_images.get(char_name)
+
+        if img:
+            screen.blit(pygame.transform.scale(img, (w, h)), (x, y))
+        else:
+            pygame.draw.rect(screen, CHARACTERS_INFO[char_name]["color"], (x, y, w, h))
+
+        draw_skin_overlay(screen, x, y, w, h, skin_id, w / CHAR_W)
+        pygame.draw.rect(screen, WHITE, (x, y, w, h), 2)
+
+    def draw_shop(self):
+        screen.fill((18, 28, 34))
+
+        title = font_lg.render("LOJA DE COSMETICOS", True, (120, 240, 200))
+        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 35))
+
+        money_txt = font_md.render(f"Dinheiro: ${save_db.get_money()}", True, (255, 230, 120))
+        screen.blit(money_txt, (40, 95))
+
+        char_name = CHARACTERS[self.selected_char_idx]
+        progress = save_db.get_character_progress(char_name)
+        equipped = save_db.get_equipped_skin(char_name)
+        owned = save_db.get_owned_skins()
+
+        char_txt = font_md.render(
+            f"{char_name} | Level {progress['level']} XP {progress['xp']}/{save_db.xp_for_next_level(progress['level'])}",
+            True,
+            WHITE,
+        )
+        screen.blit(char_txt, (40, 135))
+
+        self.shop_char_rects = []
+
+        for i, name in enumerate(CHARACTERS):
+            rect = pygame.Rect(500 + (i % 4) * 155, 95 + (i // 4) * 42, 145, 34)
+            self.shop_char_rects.append((rect, i))
+            pygame.draw.rect(screen, (65, 80, 95) if i == self.selected_char_idx else (35, 45, 55), rect, border_radius=8)
+            pygame.draw.rect(screen, (255, 230, 120) if i == self.selected_char_idx else GRAY, rect, 2, border_radius=8)
+            p = save_db.get_character_progress(name)
+            txt = font_sm.render(f"{name} Lv{p['level']}", True, WHITE)
+            screen.blit(txt, (rect.x + 8, rect.y + 7))
+
+        self.shop_skin_rects = []
+
+        for i, (skin_id, cosmetic) in enumerate(COSMETICS.items()):
+            rect = pygame.Rect(45, 190 + i * 72, 420, 58)
+            self.shop_skin_rects.append((rect, skin_id))
+            selected = skin_id == self.shop_selected_skin
+            pygame.draw.rect(screen, (55, 90, 85) if selected else (35, 45, 50), rect, border_radius=10)
+            pygame.draw.rect(screen, (120, 240, 200) if selected else GRAY, rect, 2, border_radius=10)
+
+            status = "EQUIPADA" if skin_id == equipped else ("COMPRADA" if skin_id in owned else f"${cosmetic['price']}")
+            txt = font_sm.render(f"{cosmetic['name']} - {status}", True, WHITE)
+            screen.blit(txt, (rect.x + 15, rect.y + 18))
+
+        self.draw_character_preview(char_name, self.shop_selected_skin, WIDTH - 510, 150, self.card_w * 2, self.card_h)
+
+        info_txt = font_md.render(COSMETICS[self.shop_selected_skin]["name"], True, WHITE)
+        screen.blit(info_txt, (WIDTH - 530, 150 + self.card_h + 20))
+
+        self.btn_shop_buy.draw(screen)
+        self.btn_shop_equip.draw(screen)
+        self.btn_shop_back.draw(screen)
+
+        if self.shop_message:
+            msg = font_md.render(self.shop_message, True, (255, 230, 120))
+            screen.blit(msg, (WIDTH // 2 - msg.get_width() // 2, HEIGHT - 45))
+
+    def draw_stats(self):
+        screen.fill((22, 24, 34))
+
+        title = font_lg.render("ESTATISTICAS", True, (150, 190, 255))
+        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 30))
+
+        stats = save_db.get_global_stats()
+        story_level = save_db.get_unlocked_story_level()
+        achievements = save_db.get_achievements()
+
+        summary_lines = [
+            f"Partidas: {stats['matches']}   Vitorias: {stats['wins']}   Derrotas: {stats['losses']}",
+            f"Cestas totais: {stats['baskets']}   Pontos totais: {stats['points']}",
+            f"Modo historia: fase {story_level} desbloqueada",
+            f"Achievements desbloqueados: {len(achievements)}",
+        ]
+
+        y = 105
+        for line in summary_lines:
+            txt = font_md.render(line, True, WHITE)
+            screen.blit(txt, (45, y))
+            y += 34
+
+        headers = ["Personagem", "Lv", "XP", "Part.", "V", "D", "Cestas", "Pts"]
+        xs = [45, 245, 305, 410, 500, 555, 610, 720]
+        y = 260
+
+        for x, header in zip(xs, headers):
+            txt = font_sm.render(header, True, (150, 190, 255))
+            screen.blit(txt, (x, y))
+
+        y += 28
+
+        for char in CHARACTERS:
+            p = save_db.get_character_progress(char)
+            values = [
+                char,
+                str(p["level"]),
+                f"{p['xp']}/{save_db.xp_for_next_level(p['level'])}",
+                str(p["matches"]),
+                str(p["wins"]),
+                str(p["losses"]),
+                str(p["baskets"]),
+                str(p["points"]),
+            ]
+
+            for x, value in zip(xs, values):
+                txt = font_sm.render(value, True, WHITE)
+                screen.blit(txt, (x, y))
+
+            y += 26
+
+        ach_title = font_md.render("Achievements recentes", True, (255, 230, 120))
+        screen.blit(ach_title, (860, 245))
+
+        ach_y = 290
+        recent = achievements[:10]
+
+        if not recent:
+            empty = font_sm.render("Nenhum ainda.", True, GRAY)
+            screen.blit(empty, (860, ach_y))
+        else:
+            for ach in recent:
+                label = ach["achievement_id"].replace(":", " - ")
+                txt = font_sm.render(label, True, WHITE)
+                screen.blit(txt, (860, ach_y))
+                ach_y += 28
+
+        self.btn_stats_back.draw(screen)
+
+    def draw_achievement_icon(self, rect, icon_type, unlocked):
+        center = rect.center
+        main = (255, 215, 80) if unlocked else (85, 85, 85)
+        accent = (255, 245, 180) if unlocked else (45, 45, 45)
+
+        pygame.draw.rect(screen, (30, 32, 42), rect, border_radius=14)
+        pygame.draw.rect(screen, main if unlocked else GRAY, rect, 3, border_radius=14)
+
+        if icon_type == "trophy":
+            cup = pygame.Rect(center[0] - 18, center[1] - 18, 36, 30)
+            pygame.draw.rect(screen, main, cup, border_radius=8)
+            pygame.draw.rect(screen, accent, (center[0] - 7, center[1] + 12, 14, 18), border_radius=4)
+            pygame.draw.rect(screen, main, (center[0] - 22, center[1] + 28, 44, 8), border_radius=4)
+            pygame.draw.arc(screen, main, (cup.left - 18, cup.top + 2, 28, 24), math.pi / 2, math.pi * 1.5, 3)
+            pygame.draw.arc(screen, main, (cup.right - 10, cup.top + 2, 28, 24), -math.pi / 2, math.pi / 2, 3)
+
+        elif icon_type == "ball":
+            pygame.draw.circle(screen, main, center, 26)
+            pygame.draw.circle(screen, accent, center, 26, 3)
+            pygame.draw.line(screen, accent, (center[0] - 24, center[1]), (center[0] + 24, center[1]), 3)
+            pygame.draw.arc(screen, accent, (center[0] - 24, center[1] - 26, 22, 52), -1.2, 1.2, 3)
+            pygame.draw.arc(screen, accent, (center[0] + 2, center[1] - 26, 22, 52), 1.9, 4.4, 3)
+
+        elif icon_type == "star":
+            points = []
+            for i in range(10):
+                radius = 28 if i % 2 == 0 else 12
+                angle = -math.pi / 2 + i * math.pi / 5
+                points.append((center[0] + math.cos(angle) * radius, center[1] + math.sin(angle) * radius))
+            pygame.draw.polygon(screen, main, points)
+            pygame.draw.polygon(screen, accent, points, 2)
+
+        elif icon_type == "crown":
+            pts = [
+                (center[0] - 30, center[1] + 20),
+                (center[0] - 24, center[1] - 15),
+                (center[0] - 8, center[1] + 2),
+                (center[0], center[1] - 24),
+                (center[0] + 8, center[1] + 2),
+                (center[0] + 24, center[1] - 15),
+                (center[0] + 30, center[1] + 20),
+            ]
+            pygame.draw.polygon(screen, main, pts)
+            pygame.draw.rect(screen, accent, (center[0] - 28, center[1] + 16, 56, 10), border_radius=4)
+
+        else:
+            pygame.draw.rect(screen, main, (center[0] - 22, center[1] - 8, 44, 20), border_radius=8)
+            pygame.draw.circle(screen, accent, (center[0] - 12, center[1] + 12), 8)
+            pygame.draw.circle(screen, accent, (center[0] + 18, center[1] + 10), 7)
+
+        if not unlocked:
+            lock = font_md.render("?", True, WHITE)
+            screen.blit(lock, (center[0] - lock.get_width() // 2, center[1] - lock.get_height() // 2))
+
+    def draw_achievements(self):
+        screen.fill((24, 20, 30))
+        mouse_pos = pygame.mouse.get_pos()
+
+        title = font_lg.render("ACHIEVMENTS", True, (255, 215, 90))
+        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 30))
+
+        all_achievements = save_db.get_all_achievements_status()
+        unlocked_count = sum(1 for item in all_achievements if item["unlocked"])
+        total_count = len(all_achievements)
+
+        count_txt = font_md.render(f"Desbloqueados: {unlocked_count}/{total_count}", True, WHITE)
+        screen.blit(count_txt, (50, 95))
+
+        hovered = None
+        cols = 8
+        size = 82
+        gap_x = 62
+        gap_y = 36
+        start_x = 58
+        rows = math.ceil(len(all_achievements) / cols)
+        content_height = rows * (size + gap_y)
+        max_scroll = max(0, content_height - (HEIGHT - 230))
+        self.achievements_scroll = max(0, min(self.achievements_scroll, max_scroll))
+        start_y = 150 - self.achievements_scroll
+
+        for i, item in enumerate(all_achievements):
+            col = i % cols
+            row = i // cols
+            x = start_x + col * (size + gap_x)
+            y = start_y + row * (size + gap_y)
+            rect = pygame.Rect(x, y, size, size)
+
+            if rect.bottom < 135 or rect.top > HEIGHT - 155:
+                continue
+
+            self.draw_achievement_icon(rect, item["icon"], item["unlocked"])
+
+            char_label = font_sm.render(item["character"][:8], True, WHITE if item["unlocked"] else GRAY)
+            screen.blit(char_label, (rect.centerx - char_label.get_width() // 2, rect.bottom + 4))
+
+            if rect.collidepoint(mouse_pos):
+                hovered = item
+                pygame.draw.rect(screen, WHITE, rect, 3, border_radius=14)
+
+        if hovered:
+            tooltip = pygame.Rect(335, HEIGHT - 145, 610, 95)
+            pygame.draw.rect(screen, (12, 12, 18), tooltip, border_radius=12)
+            pygame.draw.rect(screen, (255, 215, 90), tooltip, 2, border_radius=12)
+            status = "DESBLOQUEADO" if hovered["unlocked"] else "BLOQUEADO"
+            title_txt = font_md.render(f"{hovered['character']} - {hovered['name']} ({status})", True, WHITE)
+            desc_txt = font_sm.render(hovered["description"], True, (220, 220, 220))
+            screen.blit(title_txt, (tooltip.x + 18, tooltip.y + 15))
+            screen.blit(desc_txt, (tooltip.x + 18, tooltip.y + 55))
+
+        if max_scroll > 0:
+            bar_h = max(45, int((HEIGHT - 250) * ((HEIGHT - 250) / content_height)))
+            bar_y = 145 + int((HEIGHT - 250 - bar_h) * (self.achievements_scroll / max_scroll))
+            pygame.draw.rect(screen, (50, 50, 60), (WIDTH - 35, 145, 12, HEIGHT - 250), border_radius=6)
+            pygame.draw.rect(screen, (255, 215, 90), (WIDTH - 35, bar_y, 12, bar_h), border_radius=6)
+
+        self.btn_achievements_back.draw(screen)
 
     def draw_lobby(self):
         screen.fill((30, 30, 40))
@@ -602,6 +1073,8 @@ class GameClient:
                 pygame.draw.rect(screen, CHARACTERS_INFO[name]["color"], rect)
                 name_txt = font_sm.render(name, True, BLACK)
                 screen.blit(name_txt, (x + 10, start_y + self.card_h // 2))
+
+            draw_skin_overlay(screen, x, start_y, self.card_w, self.card_h, save_db.get_equipped_skin(name), self.card_w / CHAR_W)
 
             if is_taken:
                 dark_surface = pygame.Surface((self.card_w, self.card_h), pygame.SRCALPHA)
@@ -672,20 +1145,25 @@ class GameClient:
         score_surf = font_lg.render(f"Placar Final: {score[0]} x {score[1]}", True, WHITE)
         screen.blit(score_surf, (WIDTH // 2 - score_surf.get_width() // 2, 130))
 
+        if self.reward_message:
+            reward_txt = font_md.render(self.reward_message, True, (255, 230, 120))
+            screen.blit(reward_txt, (WIDTH // 2 - reward_txt.get_width() // 2, 185))
+
         winners = []
         losers = []
 
         for p_data in self.server_data["players"].values():
             if p_data["char"]:
                 if p_data["team"] == winner_team:
-                    winners.append(p_data["char"])
+                    winners.append(p_data)
                 else:
-                    losers.append(p_data["char"])
+                    losers.append(p_data)
 
         start_x_win = WIDTH // 2 - (len(winners) * (self.card_w + 20)) // 2
         y_win = HEIGHT // 2 - self.card_h // 2 - 20
 
-        for i, char_name in enumerate(winners):
+        for i, p_data in enumerate(winners):
+            char_name = p_data["char"]
             x = start_x_win + i * (self.card_w + 20)
             img = self.char_images.get(char_name)
             char_color = CHARACTERS_INFO[char_name]["color"]
@@ -697,12 +1175,88 @@ class GameClient:
                 name_fallback = font_sm.render(char_name, True, BLACK)
                 screen.blit(name_fallback, (x + 10, y_win + self.card_h // 2))
 
+            draw_skin_overlay(screen, x, y_win, self.card_w, self.card_h, p_data.get("skin_id", "default"), self.card_w / CHAR_W)
             pygame.draw.rect(screen, JACKPOT_COLOR, (x - 5, y_win - 5, self.card_w + 10, self.card_h + 10), 5)
 
             name_txt = font_md.render(char_name, True, winner_color)
             screen.blit(name_txt, (x + self.card_w // 2 - name_txt.get_width() // 2, y_win + self.card_h + 10))
 
         self.btn_exit.draw(screen)
+
+    def apply_match_rewards_once(self):
+        if not self.server_data or not self.server_data.get("game_over") or self.my_id not in self.server_data["players"]:
+            return
+
+        replay_id = self.server_data.get("replay_id", 0)
+
+        if self.reward_applied_for_replay_id == replay_id:
+            return
+
+        my_data = self.server_data["players"][self.my_id]
+        char_name = my_data.get("char")
+
+        if not char_name:
+            return
+
+        won = my_data.get("team") == self.server_data.get("winner_team")
+        baskets = int(my_data.get("match_baskets", 0))
+        points = int(my_data.get("match_points", 0))
+
+        money = 20 + baskets * 8 + points * 2
+        xp = 25 + baskets * 12 + points * 4
+
+        if won:
+            money += 60
+            xp += 70
+        else:
+            money = max(10, money // 2)
+            xp = max(12, xp // 2)
+
+        save_db.add_money(money)
+        save_db.add_character_xp(char_name, xp)
+        save_db.record_match(char_name, won, baskets, points)
+        self.reward_applied_for_replay_id = replay_id
+        self.reward_message = f"+${money}  +{xp} XP para {char_name}"
+
+        chars_in_match = {p.get("char") for p in self.server_data["players"].values() if p.get("char")}
+
+        if {"Rafael", "John Jonh"} <= chars_in_match:
+            save_db.unlock_pair_achievement("Rafael", "John Jonh", "aerial")
+
+        if {"Diogo", "Paulo"} <= chars_in_match:
+            save_db.unlock_pair_achievement("Diogo", "Paulo", "chaos")
+
+    def update_local_achievement_events(self):
+        if not self.server_data or self.my_id not in self.server_data.get("players", {}):
+            return
+
+        my_data = self.server_data["players"][self.my_id]
+        char_name = my_data.get("char")
+
+        if not char_name:
+            return
+
+        if my_data.get("dunk_ready_to_score", 0) > 0 and self.last_dunk_ready_state <= 0:
+            save_db.unlock_character_achievement(char_name, "dunk_master")
+
+        self.last_dunk_ready_state = my_data.get("dunk_ready_to_score", 0)
+
+        clash_id = my_data.get("clash_id", 0)
+
+        if my_data.get("clash_active", 0) > 0 and clash_id and clash_id != self.last_seen_clash_id:
+            self.last_seen_clash_id = clash_id
+            save_db.unlock_character_achievement(char_name, "clash_winner")
+            opponent_id = my_data.get("clash_opponent")
+            opponent = self.server_data["players"].get(opponent_id)
+
+            if opponent and opponent.get("char"):
+                pair = {char_name, opponent["char"]}
+
+                if pair == {"Henrique", "Presscinotti"}:
+                    save_db.unlock_pair_achievement("Henrique", "Presscinotti", "clash")
+
+                if pair == {"Henrique", "Miguel"}:
+                    save_db.unlock_pair_achievement("Henrique", "Miguel", "clash")
 
     def draw_player_image(self, p_data, color):
         char_name = p_data.get("char")
@@ -711,9 +1265,11 @@ class GameClient:
 
         if img:
             screen.blit(img, (p_data["x"], p_data["y"]))
+            draw_skin_overlay(screen, p_data["x"], p_data["y"], CHAR_W, CHAR_H, p_data.get("skin_id", "default"))
             pygame.draw.rect(screen, color, (p_data["x"], p_data["y"], CHAR_W, CHAR_H), 2)
         else:
             pygame.draw.rect(screen, color, (p_data["x"], p_data["y"], CHAR_W, CHAR_H))
+            draw_skin_overlay(screen, p_data["x"], p_data["y"], CHAR_W, CHAR_H, p_data.get("skin_id", "default"))
 
     def draw_game(self):
         screen.fill((40, 45, 55))
@@ -725,24 +1281,24 @@ class GameClient:
         pygame.draw.line(screen, WHITE, (WIDTH // 2, HEIGHT - 60), (WIDTH // 2, HEIGHT), 5)
 
         pygame.draw.rect(screen, GRAY, (80, HEIGHT - 360, 15, 300))
-        pygame.draw.rect(screen, WHITE, (75, HEIGHT - 410, 20, 100))
-        pygame.draw.rect(screen, TEAM_1_COLOR, (75, HEIGHT - 410, 20, 100), 3)
-        pygame.draw.rect(screen, (255, 69, 0), (95, HEIGHT - 340, 50, 8))
+        pygame.draw.rect(screen, WHITE, (LEFT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+        pygame.draw.rect(screen, TEAM_1_COLOR, (LEFT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
+        pygame.draw.rect(screen, (255, 69, 0), (LEFT_HOOP_X1, HOOP_Y, LEFT_HOOP_X2 - LEFT_HOOP_X1, 8))
 
-        pygame.draw.line(screen, WHITE, (95, HEIGHT - 332), (110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (145, HEIGHT - 332), (130, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (110, HEIGHT - 332), (130, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (130, HEIGHT - 332), (110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (LEFT_HOOP_X1, HOOP_Y + 8), (110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (LEFT_HOOP_X2, HOOP_Y + 8), (130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (110, HOOP_Y + 8), (130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (130, HOOP_Y + 8), (110, HEIGHT - 290), 2)
 
         pygame.draw.rect(screen, GRAY, (WIDTH - 95, HEIGHT - 360, 15, 300))
-        pygame.draw.rect(screen, WHITE, (WIDTH - 95, HEIGHT - 410, 20, 100))
-        pygame.draw.rect(screen, TEAM_2_COLOR, (WIDTH - 95, HEIGHT - 410, 20, 100), 3)
-        pygame.draw.rect(screen, (255, 69, 0), (WIDTH - 145, HEIGHT - 340, 50, 8))
+        pygame.draw.rect(screen, WHITE, (RIGHT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+        pygame.draw.rect(screen, TEAM_2_COLOR, (RIGHT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
+        pygame.draw.rect(screen, (255, 69, 0), (RIGHT_HOOP_X1, HOOP_Y, RIGHT_HOOP_X2 - RIGHT_HOOP_X1, 8))
 
-        pygame.draw.line(screen, WHITE, (WIDTH - 145, HEIGHT - 332), (WIDTH - 130, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (WIDTH - 95, HEIGHT - 332), (WIDTH - 110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (WIDTH - 130, HEIGHT - 332), (WIDTH - 110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (WIDTH - 110, HEIGHT - 332), (WIDTH - 130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (RIGHT_HOOP_X1, HOOP_Y + 8), (WIDTH - 130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (RIGHT_HOOP_X2, HOOP_Y + 8), (WIDTH - 110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (WIDTH - 130, HOOP_Y + 8), (WIDTH - 110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (WIDTH - 110, HOOP_Y + 8), (WIDTH - 130, HEIGHT - 290), 2)
 
         if not self.server_data:
             loading = font_md.render("Entrando na partida...", True, WHITE)
@@ -897,8 +1453,71 @@ class GameClient:
         if ball.get("holder") == self.my_id and r_state != "CUTSCENE":
             mx, my = pygame.mouse.get_pos()
 
-            pygame.draw.line(screen, WHITE, (self.player_x + 15, self.player_y + 15), (mx, my), 2)
+            if (
+                my_p_data.get("char") == "Rafael"
+                and my_p_data.get("throw_buff_timer", 0) > 0
+            ):
+                path = predict_ball_path(ball, mx, my, get_throw_power(my_p_data))
+
+                if len(path) > 1:
+                    pygame.draw.lines(screen, (255, 220, 40), False, path, 3)
+
+                    for point in path[::12]:
+                        pygame.draw.circle(screen, (255, 245, 160), point, 3)
+            else:
+                pygame.draw.line(screen, WHITE, (self.player_x + 15, self.player_y + 15), (mx, my), 2)
+
             pygame.draw.circle(screen, (255, 0, 0), (mx, my), 5)
+
+            if can_start_dunk_locally(my_p_data, ball):
+                dunk_txt = font_md.render("DUNK: aperte F perto da cesta", True, (255, 230, 80))
+                screen.blit(dunk_txt, (WIDTH // 2 - dunk_txt.get_width() // 2, HEIGHT - 105))
+
+        if my_p_data.get("dunk_active", 0) > 0:
+            sequence = my_p_data.get("dunk_sequence", [])
+            index = my_p_data.get("dunk_index", 0)
+            timer = max(0, my_p_data.get("dunk_timer", 0))
+
+            pygame.draw.rect(screen, BLACK, (WIDTH // 2 - 310, 105, 620, 115), border_radius=14)
+            title = font_md.render("DUNK QTE", True, (255, 230, 80))
+            screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 115))
+
+            x = WIDTH // 2 - len(sequence) * 32
+
+            for i, key in enumerate(sequence):
+                color = (70, 255, 120) if i < index else WHITE
+                box_color = (40, 90, 50) if i < index else (70, 70, 70)
+                rect = pygame.Rect(x + i * 64, 160, 48, 42)
+                pygame.draw.rect(screen, box_color, rect, border_radius=8)
+                pygame.draw.rect(screen, color, rect, 2, border_radius=8)
+                key_txt = font_md.render(key, True, color)
+                screen.blit(key_txt, (rect.centerx - key_txt.get_width() // 2, rect.centery - key_txt.get_height() // 2))
+
+            time_txt = font_sm.render(f"Tempo: {timer / FPS:.1f}s", True, WHITE)
+            screen.blit(time_txt, (WIDTH // 2 - time_txt.get_width() // 2, 205))
+
+        if my_p_data.get("clash_active", 0) > 0:
+            sequence = my_p_data.get("clash_sequence", [])
+            index = my_p_data.get("clash_index", 0)
+            timer = max(0, my_p_data.get("clash_timer", 0))
+
+            pygame.draw.rect(screen, BLACK, (WIDTH // 2 - 340, 235, 680, 120), border_radius=14)
+            title = font_md.render("CLASH DE HABILIDADES", True, (120, 220, 255))
+            screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 245))
+
+            x = WIDTH // 2 - len(sequence) * 32
+
+            for i, key in enumerate(sequence):
+                color = (80, 220, 255) if i < index else WHITE
+                box_color = (30, 70, 90) if i < index else (70, 70, 70)
+                rect = pygame.Rect(x + i * 64, 290, 48, 42)
+                pygame.draw.rect(screen, box_color, rect, border_radius=8)
+                pygame.draw.rect(screen, color, rect, 2, border_radius=8)
+                key_txt = font_md.render(key, True, color)
+                screen.blit(key_txt, (rect.centerx - key_txt.get_width() // 2, rect.centery - key_txt.get_height() // 2))
+
+            time_txt = font_sm.render(f"Tempo: {timer / FPS:.1f}s", True, WHITE)
+            screen.blit(time_txt, (WIDTH // 2 - time_txt.get_width() // 2, 335))
 
         server_cd = my_p_data.get("ability_cd", self.ability_cooldown)
 
@@ -981,18 +1600,53 @@ class GameClient:
                     if my_p.get("roleta_state") == "CUTSCENE":
                         continue
 
+                    if event.type == pygame.KEYDOWN and my_p.get("clash_active", 0) > 0:
+                        qte_key = qte_key_from_event(event)
+
+                        if qte_key:
+                            data_to_send["action"] = "CLASH_QTE_KEY"
+                            data_to_send["key"] = qte_key
+                            continue
+
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                        if self.server_data.get("ball", {}).get("holder") == self.my_id:
+                        if (
+                            self.server_data.get("ball", {}).get("holder") == self.my_id
+                            and my_p.get("dunk_active", 0) <= 0
+                            and my_p.get("clash_active", 0) <= 0
+                        ):
                             data_to_send["action"] = "THROW"
                             data_to_send["target_x"] = mouse_pos[0]
                             data_to_send["target_y"] = mouse_pos[1]
 
+                    if event.type == pygame.KEYDOWN and my_p.get("dunk_active", 0) > 0:
+                        qte_key = qte_key_from_event(event)
+
+                        if qte_key:
+                            data_to_send["action"] = "DUNK_QTE_KEY"
+                            data_to_send["key"] = qte_key
+                            continue
+
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_f:
+                        ball = self.server_data.get("ball", {})
+
+                        if (
+                            ball.get("holder") == self.my_id
+                            and my_p.get("clash_active", 0) <= 0
+                            and can_start_dunk_locally(my_p, ball)
+                        ):
+                            data_to_send["action"] = "DUNK_START"
+                            continue
+
                     if event.type == pygame.KEYDOWN and event.key == pygame.K_e:
                         server_cd = my_p.get("ability_cd", self.ability_cooldown)
 
-                        if server_cd <= 0 and my_p.get("stun_timer", 0) <= 0:
+                        if server_cd <= 0 and my_p.get("stun_timer", 0) <= 0 and my_p.get("clash_active", 0) <= 0:
                             data_to_send["action"] = "USE_ABILITY"
                             data_to_send["facing"] = self.facing
+                            ability_achievement = ABILITY_ACHIEVEMENTS.get(my_p.get("char"))
+
+                            if ability_achievement:
+                                save_db.unlock_character_achievement(my_p["char"], ability_achievement)
 
                             if CHARACTERS[self.selected_char_idx] in ["Diogo", "Paulo"]:
                                 self.ability_cooldown = 480
@@ -1066,10 +1720,59 @@ class GameClient:
                         elif self.btn_story.is_clicked(mouse_pos):
                             start_story_mode_process()
 
+                        elif self.btn_shop.is_clicked(mouse_pos):
+                            self.state = "SHOP"
+
+                        elif self.btn_stats.is_clicked(mouse_pos):
+                            self.state = "STATS"
+
+                        elif self.btn_achievements.is_clicked(mouse_pos):
+                            self.state = "ACHIEVEMENTS"
+
                         elif self.btn_quit_game.is_clicked(mouse_pos):
                             running = False
 
                             self.stop_local_server()
+                elif self.state == "SHOP":
+                    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        if self.btn_shop_back.is_clicked(mouse_pos):
+                            self.state = "MENU"
+
+                        elif self.btn_shop_buy.is_clicked(mouse_pos):
+                            ok, msg = save_db.buy_skin(self.shop_selected_skin)
+                            self.shop_message = msg
+
+                        elif self.btn_shop_equip.is_clicked(mouse_pos):
+                            char_name = CHARACTERS[self.selected_char_idx]
+                            ok, msg = save_db.equip_skin(char_name, self.shop_selected_skin)
+                            self.shop_message = msg
+
+                        else:
+                            for rect, char_idx in getattr(self, "shop_char_rects", []):
+                                if rect.collidepoint(mouse_pos):
+                                    self.selected_char_idx = char_idx
+                                    self.shop_selected_skin = save_db.get_equipped_skin(CHARACTERS[self.selected_char_idx])
+                                    self.shop_message = ""
+                                    break
+
+                            for rect, skin_id in getattr(self, "shop_skin_rects", []):
+                                if rect.collidepoint(mouse_pos):
+                                    self.shop_selected_skin = skin_id
+                                    self.shop_message = ""
+
+                elif self.state == "STATS":
+                    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        if self.btn_stats_back.is_clicked(mouse_pos):
+                            self.state = "MENU"
+
+                elif self.state == "ACHIEVEMENTS":
+                    if event.type == pygame.MOUSEWHEEL:
+                        self.achievements_scroll -= event.y * 45
+
+                    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        if self.btn_achievements_back.is_clicked(mouse_pos):
+                            self.state = "MENU"
+
                 elif self.state == "LOBBY":
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         if self.btn_leave_lobby.is_clicked(mouse_pos):
@@ -1107,6 +1810,7 @@ class GameClient:
                 if self.state == "LOBBY":
                     data_to_send["action"] = "UPDATE_LOBBY"
                     data_to_send["char"] = CHARACTERS[self.selected_char_idx]
+                    data_to_send["skin_id"] = save_db.get_equipped_skin(CHARACTERS[self.selected_char_idx])
                     data_to_send["team"] = self.my_team
 
                 elif self.state == "PLAYING":
@@ -1148,13 +1852,16 @@ class GameClient:
                             is_stunned = my_p.get("stun_timer", 0) > 0
                             is_dashing = my_p.get("dash_timer", 0) > 0
                             is_knocked = my_p.get("knockback_timer", 0) > 0
+                            is_dunking = my_p.get("dunk_active", 0) > 0
+                            is_clashing = my_p.get("clash_active", 0) > 0
 
-                            if is_dashing or is_knocked or is_stunned:
+                            if is_dashing or is_knocked or is_stunned or is_dunking or is_clashing:
                                 self.player_x = my_p["x"]
+                                self.player_y = my_p["y"]
 
                             keys = pygame.key.get_pressed()
 
-                            if not is_stunned and not is_dashing and not is_knocked:
+                            if not is_stunned and not is_dashing and not is_knocked and not is_dunking and not is_clashing:
                                 if keys[pygame.K_a]:
                                     self.player_x -= self.speed
                                     self.facing = -1
@@ -1169,13 +1876,25 @@ class GameClient:
                                     self.vel_y = self.jump_power
                                     self.is_jumping = True
 
-                            self.vel_y += self.gravity
-                            self.player_y += self.vel_y
-
-                            if self.player_y >= GROUND_Y - CHAR_H:
-                                self.player_y = GROUND_Y - CHAR_H
+                            if is_dunking or is_clashing:
                                 self.vel_y = 0
-                                self.is_jumping = False
+                            else:
+                                gravity = self.gravity
+
+                                if my_p.get("john_float_timer", 0) > 0 and self.vel_y > 0:
+                                    gravity *= 0.22
+
+                                self.vel_y += gravity
+
+                                if my_p.get("john_float_timer", 0) > 0 and self.vel_y > 0:
+                                    self.vel_y = min(self.vel_y, 3.0)
+
+                                self.player_y += self.vel_y
+
+                                if self.player_y >= GROUND_Y - CHAR_H:
+                                    self.player_y = GROUND_Y - CHAR_H
+                                    self.vel_y = 0
+                                    self.is_jumping = False
 
                             if self.ability_cooldown > 0:
                                 self.ability_cooldown -= 1
@@ -1188,6 +1907,7 @@ class GameClient:
 
                 if self.server_data:
                     self.check_replay_trigger()
+                    self.update_local_achievement_events()
 
                 if not self.server_data:
                     self.state = "MENU"
@@ -1195,6 +1915,7 @@ class GameClient:
 
                 else:
                     if self.server_data.get("game_over"):
+                        self.apply_match_rewards_once()
                         self.state = "GAME_OVER"
 
                     elif self.state == "LOBBY" and self.server_data["game_started"]:
@@ -1211,9 +1932,11 @@ class GameClient:
                         is_dashing = my_data.get("dash_timer", 0) > 0
                         is_knocked = my_data.get("knockback_timer", 0) > 0
                         is_stunned = my_data.get("stun_timer", 0) > 0
+                        is_dunking = my_data.get("dunk_active", 0) > 0
+                        is_clashing = my_data.get("clash_active", 0) > 0
                         has_ball = self.server_data["ball"].get("holder") == self.my_id
 
-                        if is_replay_active or is_dashing or is_knocked or is_stunned or has_ball:
+                        if is_replay_active or is_dashing or is_knocked or is_stunned or is_dunking or is_clashing or has_ball:
                             self.player_x = my_data["x"]
                             self.player_y = my_data["y"]
 
@@ -1221,6 +1944,15 @@ class GameClient:
 
             if self.state == "MENU":
                 self.draw_menu()
+
+            elif self.state == "SHOP":
+                self.draw_shop()
+
+            elif self.state == "STATS":
+                self.draw_stats()
+
+            elif self.state == "ACHIEVEMENTS":
+                self.draw_achievements()
 
             elif self.state == "LOBBY":
                 self.draw_lobby()

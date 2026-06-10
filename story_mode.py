@@ -5,8 +5,10 @@ import math
 import random
 import json
 from config import *
+import save_db
 
 pygame.init()
+save_db.init_db()
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("NN League - Modo História")
@@ -53,28 +55,244 @@ def make_team_tinted_image(image, team):
     return tinted
 
 
+def get_player_throw_power(player):
+    power = 25
+
+    if player["char"] == "Rafael":
+        power = 34
+
+    if player["throw_buff"] > 0:
+        power += 8
+
+    if player["jackpot_timer"] > 0:
+        power += 10
+
+    return power
+
+
+def get_score_points_from_origin(ball, scored_team):
+    origin_x = ball.get("shot_origin_x")
+    origin_y = ball.get("shot_origin_y")
+
+    if ball.get("score_override"):
+        return ball["score_override"]
+
+    if origin_x is None or origin_y is None:
+        return 2
+
+    hoop_x, hoop_y = get_attack_hoop(scored_team)
+    distance = math.hypot(origin_x - hoop_x, origin_y - hoop_y)
+
+    if distance >= THREE_POINT_DISTANCE:
+        return 3
+
+    return 2
+
+
+def predict_ball_path(ball, target_x, target_y, power, steps=180):
+    angle = math.atan2(target_y - ball["y"], target_x - ball["x"])
+    x = ball["x"]
+    y = ball["y"]
+    vel_x = math.cos(angle) * power
+    vel_y = math.sin(angle) * power
+    points = [(int(x), int(y))]
+
+    for _ in range(steps):
+        vel_y += GRAVITY
+        x += vel_x
+        y += vel_y
+
+        if y >= GROUND_Y - BALL_RAD:
+            y = GROUND_Y - BALL_RAD
+            vel_y *= -0.7
+            vel_x *= 0.9
+
+        if x <= BALL_RAD:
+            x = BALL_RAD
+            vel_x *= -0.8
+
+        if x >= WIDTH - BALL_RAD:
+            x = WIDTH - BALL_RAD
+            vel_x *= -0.8
+
+        temp_ball = {"x": x, "y": y, "vel_x": vel_x, "vel_y": vel_y}
+        resolve_hoop_collisions(temp_ball)
+        x = temp_ball["x"]
+        y = temp_ball["y"]
+        vel_x = temp_ball["vel_x"]
+        vel_y = temp_ball["vel_y"]
+
+        points.append((int(x), int(y)))
+
+        if abs(vel_x) < 0.35 and abs(vel_y) < 1 and y >= GROUND_Y - BALL_RAD - 1:
+            break
+
+    return points
+
+
+def is_player_timed_ability_active(player):
+    char = player["char"]
+
+    if char == "Henrique":
+        return player["dash_timer"] > 0
+
+    if char == "Natan":
+        return player["invisible_timer"] > 0
+
+    if char == "Presscinotti":
+        return player["ear_timer"] > 0
+
+    if char == "Diogo":
+        return player["speed_buff"] > 0 or player["throw_buff"] > 0
+
+    if char == "Miguel":
+        return player["clone_timer"] > 0
+
+    if char == "Rafael":
+        return player["throw_buff"] > 0
+
+    if char == "John Jonh":
+        return player["john_float_timer"] > 0
+
+    if char == "Paulo":
+        return (
+            player["speed_buff"] > 0
+            or player["throw_buff"] > 0
+            or player["jackpot_timer"] > 0
+            or player["roleta_timer"] > 0
+        )
+
+    return False
+
+
+def get_attack_hoop(team):
+    if team == 1:
+        return (RIGHT_HOOP_X1 + RIGHT_HOOP_X2) / 2, HOOP_Y
+
+    return (LEFT_HOOP_X1 + LEFT_HOOP_X2) / 2, HOOP_Y
+
+
+def can_start_dunk(player, ball):
+    if ball["holder"] != "player":
+        return False
+
+    if player.get("dunk_active", 0) > 0:
+        return False
+
+    if player.get("stun_timer", 0) > 0 or player.get("knockback_timer", 0) > 0:
+        return False
+
+    if player["y"] >= GROUND_Y - CHAR_H - 4:
+        return False
+
+    hoop_x, hoop_y = get_attack_hoop(player["team"])
+    player_cx = player["x"] + CHAR_W / 2
+    player_cy = player["y"] + CHAR_H / 2
+
+    return (
+        abs(player_cx - hoop_x) <= DUNK_RANGE_X
+        and abs(player_cy - hoop_y) <= DUNK_RANGE_Y
+    )
+
+
+def qte_key_from_event(event):
+    if event.key == pygame.K_w:
+        return "W"
+
+    if event.key == pygame.K_a:
+        return "A"
+
+    if event.key == pygame.K_s:
+        return "S"
+
+    if event.key == pygame.K_d:
+        return "D"
+
+    return None
+
+
+def update_dunk_position(player):
+    player["dunk_anim_timer"] = min(player.get("dunk_anim_timer", 0) + 1, DUNK_ANIM_TIMER)
+    t = player["dunk_anim_timer"] / DUNK_ANIM_TIMER
+    eased = 1 - (1 - t) * (1 - t)
+    arc = math.sin(math.pi * t) * DUNK_JUMP_ARC
+
+    start_x = player.get("dunk_start_x", player["x"])
+    start_y = player.get("dunk_start_y", player["y"])
+    target_x = player.get("dunk_target_x", player["x"])
+    target_y = player.get("dunk_target_y", player["y"])
+
+    player["x"] = clamp(start_x + (target_x - start_x) * eased, 0, WIDTH - CHAR_W)
+    player["y"] = clamp(start_y + (target_y - start_y) * eased - arc, 0, GROUND_Y - CHAR_H)
+
+
+def ball_crossed_hoop(prev_y, ball, x1, x2):
+    return (
+        ball["vel_y"] > 0
+        and prev_y <= HOOP_Y + HOOP_SCORE_MARGIN_Y
+        and ball["y"] >= HOOP_Y - HOOP_SCORE_MARGIN_Y
+        and x1 + HOOP_SCORE_MARGIN_X <= ball["x"] <= x2 - HOOP_SCORE_MARGIN_X
+    )
+
+
+def resolve_circle_point_collision(ball, point_x, point_y, radius, bounce=0.78):
+    dx = ball["x"] - point_x
+    dy = ball["y"] - point_y
+    dist = math.hypot(dx, dy)
+    min_dist = BALL_RAD + radius
+
+    if dist <= 0 or dist >= min_dist:
+        return
+
+    nx = dx / dist
+    ny = dy / dist
+    dot = ball["vel_x"] * nx + ball["vel_y"] * ny
+
+    ball["x"] = point_x + nx * min_dist
+    ball["y"] = point_y + ny * min_dist
+
+    if dot < 0:
+        ball["vel_x"] -= (1 + bounce) * dot * nx
+        ball["vel_y"] -= (1 + bounce) * dot * ny
+
+
+def resolve_circle_rect_collision(ball, rect, bounce=0.75):
+    rx, ry, rw, rh = rect
+    closest_x = clamp(ball["x"], rx, rx + rw)
+    closest_y = clamp(ball["y"], ry, ry + rh)
+    dx = ball["x"] - closest_x
+    dy = ball["y"] - closest_y
+    dist = math.hypot(dx, dy)
+
+    if dist <= 0 or dist >= BALL_RAD:
+        return
+
+    nx = dx / dist
+    ny = dy / dist
+    dot = ball["vel_x"] * nx + ball["vel_y"] * ny
+
+    ball["x"] = closest_x + nx * BALL_RAD
+    ball["y"] = closest_y + ny * BALL_RAD
+
+    if dot < 0:
+        ball["vel_x"] -= (1 + bounce) * dot * nx
+        ball["vel_y"] -= (1 + bounce) * dot * ny
+
+
+def resolve_hoop_collisions(ball):
+    for rim_x in (LEFT_HOOP_X1, LEFT_HOOP_X2, RIGHT_HOOP_X1, RIGHT_HOOP_X2):
+        resolve_circle_point_collision(ball, rim_x, HOOP_Y, HOOP_RIM_RAD)
+
+    resolve_circle_rect_collision(ball, (LEFT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+    resolve_circle_rect_collision(ball, (RIGHT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+
+
 def load_save():
-    if not os.path.exists(SAVE_FILE):
-        return {"unlocked_level": 1}
-
-    try:
-        with open(SAVE_FILE, "r", encoding="utf-8") as file:
-            data = json.load(file)
-
-        return {
-            "unlocked_level": int(data.get("unlocked_level", 1))
-        }
-
-    except Exception:
-        return {"unlocked_level": 1}
+    return {"unlocked_level": save_db.get_unlocked_story_level()}
 
 
 def save_progress(unlocked_level):
-    try:
-        with open(SAVE_FILE, "w", encoding="utf-8") as file:
-            json.dump({"unlocked_level": unlocked_level}, file, indent=4)
-    except Exception:
-        pass
+    save_db.set_unlocked_story_level(unlocked_level)
 
 
 class Button:
@@ -404,8 +622,22 @@ class StoryMode:
             "clone_y": 0,
             "speed_buff": 0,
             "throw_buff": 0,
+            "john_float_timer": 0,
             "jackpot_timer": 0,
-            "roleta_timer": 0
+            "roleta_timer": 0,
+            "dunk_active": 0,
+            "dunk_timer": 0,
+            "dunk_anim_timer": 0,
+            "dunk_ready_to_score": 0,
+            "dunk_sequence": [],
+            "dunk_index": 0,
+            "dunk_start_x": 200,
+            "dunk_start_y": GROUND_Y - CHAR_H,
+            "dunk_target_x": 200,
+            "dunk_target_y": GROUND_Y - CHAR_H,
+            "stun_timer": 0,
+            "knockback_timer": 0,
+            "knockback_vx": 0
         }
 
         self.npc = {
@@ -428,7 +660,11 @@ class StoryMode:
             "y": HEIGHT // 2 - 100,
             "vel_x": 0,
             "vel_y": 0,
-            "holder": None
+            "holder": None,
+            "dunk_no_score_timer": 0,
+            "shot_origin_x": None,
+            "shot_origin_y": None,
+            "score_override": None,
         }
 
         self.score = [0, 0]
@@ -597,24 +833,24 @@ class StoryMode:
         pygame.draw.line(screen, WHITE, (WIDTH // 2, HEIGHT - 60), (WIDTH // 2, HEIGHT), 5)
 
         pygame.draw.rect(screen, GRAY, (80, HEIGHT - 360, 15, 300))
-        pygame.draw.rect(screen, WHITE, (75, HEIGHT - 410, 20, 100))
-        pygame.draw.rect(screen, TEAM_1_COLOR, (75, HEIGHT - 410, 20, 100), 3)
-        pygame.draw.rect(screen, (255, 69, 0), (95, HEIGHT - 340, 50, 8))
+        pygame.draw.rect(screen, WHITE, (LEFT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+        pygame.draw.rect(screen, TEAM_1_COLOR, (LEFT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
+        pygame.draw.rect(screen, (255, 69, 0), (LEFT_HOOP_X1, HOOP_Y, LEFT_HOOP_X2 - LEFT_HOOP_X1, 8))
 
-        pygame.draw.line(screen, WHITE, (95, HEIGHT - 332), (110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (145, HEIGHT - 332), (130, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (110, HEIGHT - 332), (130, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (130, HEIGHT - 332), (110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (LEFT_HOOP_X1, HOOP_Y + 8), (110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (LEFT_HOOP_X2, HOOP_Y + 8), (130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (110, HOOP_Y + 8), (130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (130, HOOP_Y + 8), (110, HEIGHT - 290), 2)
 
         pygame.draw.rect(screen, GRAY, (WIDTH - 95, HEIGHT - 360, 15, 300))
-        pygame.draw.rect(screen, WHITE, (WIDTH - 95, HEIGHT - 410, 20, 100))
-        pygame.draw.rect(screen, TEAM_2_COLOR, (WIDTH - 95, HEIGHT - 410, 20, 100), 3)
-        pygame.draw.rect(screen, (255, 69, 0), (WIDTH - 145, HEIGHT - 340, 50, 8))
+        pygame.draw.rect(screen, WHITE, (RIGHT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+        pygame.draw.rect(screen, TEAM_2_COLOR, (RIGHT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
+        pygame.draw.rect(screen, (255, 69, 0), (RIGHT_HOOP_X1, HOOP_Y, RIGHT_HOOP_X2 - RIGHT_HOOP_X1, 8))
 
-        pygame.draw.line(screen, WHITE, (WIDTH - 145, HEIGHT - 332), (WIDTH - 130, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (WIDTH - 95, HEIGHT - 332), (WIDTH - 110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (WIDTH - 130, HEIGHT - 332), (WIDTH - 110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (WIDTH - 110, HEIGHT - 332), (WIDTH - 130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (RIGHT_HOOP_X1, HOOP_Y + 8), (WIDTH - 130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (RIGHT_HOOP_X2, HOOP_Y + 8), (WIDTH - 110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (WIDTH - 130, HOOP_Y + 8), (WIDTH - 110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (WIDTH - 110, HOOP_Y + 8), (WIDTH - 130, HEIGHT - 290), 2)
 
     def draw_character(self, entity):
         char = entity["char"]
@@ -699,8 +935,46 @@ class StoryMode:
 
         if self.ball["holder"] == "player":
             mx, my = pygame.mouse.get_pos()
-            pygame.draw.line(screen, WHITE, (self.player["x"] + CHAR_W // 2, self.player["y"] + 15), (mx, my), 2)
+
+            if self.player["char"] == "Rafael" and self.player["throw_buff"] > 0:
+                path = predict_ball_path(self.ball, mx, my, get_player_throw_power(self.player))
+
+                if len(path) > 1:
+                    pygame.draw.lines(screen, (255, 220, 40), False, path, 3)
+
+                    for point in path[::12]:
+                        pygame.draw.circle(screen, (255, 245, 160), point, 3)
+            else:
+                pygame.draw.line(screen, WHITE, (self.player["x"] + CHAR_W // 2, self.player["y"] + 15), (mx, my), 2)
+
             pygame.draw.circle(screen, (255, 0, 0), (mx, my), 5)
+
+            if can_start_dunk(self.player, self.ball):
+                dunk_txt = font_md.render("DUNK: aperte F perto da cesta", True, (255, 230, 80))
+                screen.blit(dunk_txt, (WIDTH // 2 - dunk_txt.get_width() // 2, HEIGHT - 105))
+
+        if self.player["dunk_active"] > 0:
+            sequence = self.player["dunk_sequence"]
+            index = self.player["dunk_index"]
+            timer = max(0, self.player["dunk_timer"])
+
+            pygame.draw.rect(screen, BLACK, (WIDTH // 2 - 310, 105, 620, 115), border_radius=14)
+            title = font_md.render("DUNK QTE", True, (255, 230, 80))
+            screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 115))
+
+            x = WIDTH // 2 - len(sequence) * 32
+
+            for i, key in enumerate(sequence):
+                color = (70, 255, 120) if i < index else WHITE
+                box_color = (40, 90, 50) if i < index else (70, 70, 70)
+                rect = pygame.Rect(x + i * 64, 160, 48, 42)
+                pygame.draw.rect(screen, box_color, rect, border_radius=8)
+                pygame.draw.rect(screen, color, rect, 2, border_radius=8)
+                key_txt = font_md.render(key, True, color)
+                screen.blit(key_txt, (rect.centerx - key_txt.get_width() // 2, rect.centery - key_txt.get_height() // 2))
+
+            time_txt = font_sm.render(f"Tempo: {timer / FPS:.1f}s", True, WHITE)
+            screen.blit(time_txt, (WIDTH // 2 - time_txt.get_width() // 2, 205))
 
         if self.player["ability_cd"] > 0:
             cd_txt = font_md.render(f"Poder: {self.player['ability_cd'] // 60}s", True, (255, 70, 70))
@@ -767,7 +1041,16 @@ class StoryMode:
         self.btn_menu.draw(screen)
 
     def apply_gravity(self, entity):
-        entity["vel_y"] += GRAVITY
+        gravity = GRAVITY
+
+        if entity is self.player and entity.get("john_float_timer", 0) > 0 and entity["vel_y"] > 0:
+            gravity *= 0.22
+
+        entity["vel_y"] += gravity
+
+        if entity is self.player and entity.get("john_float_timer", 0) > 0 and entity["vel_y"] > 0:
+            entity["vel_y"] = min(entity["vel_y"], 3.0)
+
         entity["y"] += entity["vel_y"]
 
         if entity["y"] >= GROUND_Y - CHAR_H:
@@ -782,6 +1065,7 @@ class StoryMode:
         jump_power = -16
 
         char = self.player["char"]
+        ability_paused = is_player_timed_ability_active(self.player)
 
         if char == "John Jonh":
             speed = 9
@@ -798,6 +1082,32 @@ class StoryMode:
             speed += 5
             jump_power -= 5
             self.player["jackpot_timer"] -= 1
+
+        if self.player["dunk_active"] > 0:
+            interrupted = self.player["stun_timer"] > 0 or self.player["knockback_timer"] > 0
+            lost_ball = self.ball["holder"] != "player"
+
+            if interrupted or lost_ball:
+                if interrupted or self.ball["holder"] is None:
+                    self.fail_dunk()
+                else:
+                    self.cancel_dunk()
+            else:
+                self.player["dunk_timer"] -= 1
+                update_dunk_position(self.player)
+                self.player["vel_y"] = 0
+
+                if (
+                    self.player["dunk_ready_to_score"] > 0
+                    and self.player["dunk_anim_timer"] >= DUNK_ANIM_TIMER
+                ):
+                    self.finish_dunk()
+                    return
+
+                if self.player["dunk_timer"] <= 0:
+                    self.fail_dunk()
+
+                return
 
         if self.player["dash_timer"] > 0:
             self.player["dash_timer"] -= 1
@@ -826,7 +1136,7 @@ class StoryMode:
 
         self.player["x"] = clamp(self.player["x"], 0, WIDTH - CHAR_W)
 
-        if self.player["ability_cd"] > 0:
+        if self.player["ability_cd"] > 0 and not ability_paused:
             self.player["ability_cd"] -= 1
 
         if self.player["invisible_timer"] > 0:
@@ -839,6 +1149,9 @@ class StoryMode:
         if self.player["clone_timer"] > 0:
             self.player["clone_timer"] -= 1
             self.update_clone()
+
+        if self.player["john_float_timer"] > 0:
+            self.player["john_float_timer"] -= 1
 
         self.apply_gravity(self.player)
 
@@ -905,10 +1218,87 @@ class StoryMode:
             self.message_timer = 120
 
         elif char == "John Jonh":
-            self.player["speed_buff"] = 300
+            self.player["john_float_timer"] = 300
             self.player["ability_cd"] = 360
             self.message = "John Jonh ficou leve como o vento!"
             self.message_timer = 120
+
+    def start_dunk(self):
+        if not can_start_dunk(self.player, self.ball):
+            return
+
+        hoop_x, hoop_y = get_attack_hoop(self.player["team"])
+        self.player["dunk_active"] = 1
+        self.player["dunk_timer"] = DUNK_TIMER
+        self.player["dunk_anim_timer"] = 0
+        self.player["dunk_ready_to_score"] = 0
+        self.player["dunk_sequence"] = [random.choice(DUNK_KEYS) for _ in range(DUNK_SEQUENCE_LEN)]
+        self.player["dunk_index"] = 0
+        self.player["dunk_start_x"] = self.player["x"]
+        self.player["dunk_start_y"] = self.player["y"]
+        self.player["dunk_target_x"] = clamp(hoop_x - CHAR_W / 2, 0, WIDTH - CHAR_W)
+        self.player["dunk_target_y"] = clamp(hoop_y - DUNK_HOLD_OFFSET_Y, 0, GROUND_Y - CHAR_H)
+        self.player["vel_y"] = 0
+        self.ball["holder"] = "player"
+        self.message = "Dunk iniciado! Complete o QTE!"
+        self.message_timer = 90
+
+    def cancel_dunk(self):
+        self.player["dunk_active"] = 0
+        self.player["dunk_timer"] = 0
+        self.player["dunk_anim_timer"] = 0
+        self.player["dunk_ready_to_score"] = 0
+        self.player["dunk_sequence"] = []
+        self.player["dunk_index"] = 0
+
+    def fail_dunk(self):
+        hoop_x, _ = get_attack_hoop(self.player["team"])
+        direction = -1 if hoop_x > WIDTH / 2 else 1
+        safe_x = clamp(hoop_x + direction * (DUNK_RANGE_X + 70), BALL_RAD, WIDTH - BALL_RAD)
+        safe_y = clamp(HOOP_Y + 55, BALL_RAD, GROUND_Y - BALL_RAD)
+
+        self.cancel_dunk()
+        self.player["x"] = clamp(safe_x - CHAR_W / 2, 0, WIDTH - CHAR_W)
+        self.player["y"] = clamp(safe_y - CHAR_H / 2, 0, GROUND_Y - CHAR_H)
+
+        if self.ball["holder"] == "player":
+            self.ball["holder"] = None
+
+        self.ball["x"] = safe_x
+        self.ball["y"] = safe_y
+        self.ball["vel_x"] = direction * 9
+        self.ball["vel_y"] = -7
+        self.ball["dunk_no_score_timer"] = DUNK_NO_SCORE_TIMER
+
+        self.message = "Dunk falhou!"
+        self.message_timer = 90
+
+    def finish_dunk(self):
+        self.cancel_dunk()
+        self.ball["score_override"] = 2
+        self.score[0] += 2
+        self.reset_after_point()
+        self.message = "DUNK!"
+        self.message_timer = 120
+
+        if self.score[0] >= self.level["target_score"]:
+            self.unlock_next_level()
+            self.state = "WIN"
+
+    def handle_dunk_qte(self, key):
+        if self.player["dunk_active"] <= 0:
+            return
+
+        sequence = self.player["dunk_sequence"]
+        index = self.player["dunk_index"]
+
+        if index < len(sequence) and key == sequence[index]:
+            self.player["dunk_index"] += 1
+
+            if self.player["dunk_index"] >= len(sequence):
+                self.player["dunk_ready_to_score"] = 1
+        else:
+            self.fail_dunk()
 
     def apply_ear_power(self):
         left_ear = (self.player["x"] - 32, self.player["y"] + 5, 32, CHAR_H - 10)
@@ -1022,6 +1412,11 @@ class StoryMode:
         self.apply_gravity(self.npc)
 
     def update_ball(self):
+        prev_ball_y = self.ball["y"]
+
+        if self.ball.get("dunk_no_score_timer", 0) > 0:
+            self.ball["dunk_no_score_timer"] -= 1
+
         if self.ball["holder"] == "player":
             self.ball["x"] = self.player["x"] + CHAR_W // 2
             self.ball["y"] = self.player["y"] + 16
@@ -1052,9 +1447,10 @@ class StoryMode:
                 self.ball["x"] = WIDTH - BALL_RAD
                 self.ball["vel_x"] *= -0.8
 
+            resolve_hoop_collisions(self.ball)
             self.check_catch()
 
-        self.check_score()
+        self.check_score(prev_ball_y)
 
     def check_catch(self):
         px = self.player["x"] + CHAR_W // 2
@@ -1075,23 +1471,22 @@ class StoryMode:
         if self.ball["holder"] != "player":
             return
 
+        if self.player["dunk_active"] > 0:
+            return
+
         angle = math.atan2(target_y - self.ball["y"], target_x - self.ball["x"])
 
-        power = 25
-
-        if self.player["char"] == "Rafael":
-            power = 34
+        power = get_player_throw_power(self.player)
 
         if self.player["throw_buff"] > 0:
-            power += 8
             self.player["throw_buff"] -= 60
-
-        if self.player["jackpot_timer"] > 0:
-            power += 10
 
         self.ball["vel_x"] = math.cos(angle) * power
         self.ball["vel_y"] = math.sin(angle) * power
         self.ball["holder"] = None
+        self.ball["shot_origin_x"] = self.player["x"] + CHAR_W / 2
+        self.ball["shot_origin_y"] = self.player["y"] + CHAR_H / 2
+        self.ball["score_override"] = None
 
     def npc_throw(self, accuracy):
         if self.ball["holder"] != "npc":
@@ -1113,22 +1508,34 @@ class StoryMode:
         self.ball["vel_x"] = math.cos(angle) * power
         self.ball["vel_y"] = math.sin(angle) * power
         self.ball["holder"] = None
+        self.ball["shot_origin_x"] = self.npc["x"] + CHAR_W / 2
+        self.ball["shot_origin_y"] = self.npc["y"] + CHAR_H / 2
+        self.ball["score_override"] = None
 
-    def check_score(self):
-        hoop_y_zone = HEIGHT - 340
+    def check_score(self, prev_ball_y):
         scored = False
+        points = 0
 
-        if hoop_y_zone - 30 < self.ball["y"] < hoop_y_zone:
-            if 95 <= self.ball["x"] <= 145 and self.ball["vel_y"] > 0:
-                self.score[1] += 2
-                scored = True
+        if (
+            self.ball.get("dunk_no_score_timer", 0) <= 0
+            and ball_crossed_hoop(prev_ball_y, self.ball, LEFT_HOOP_X1, LEFT_HOOP_X2)
+        ):
+            points = get_score_points_from_origin(self.ball, 2)
+            self.score[1] += points
+            scored = True
 
-            elif (WIDTH - 145) <= self.ball["x"] <= (WIDTH - 95) and self.ball["vel_y"] > 0:
-                self.score[0] += 2
-                scored = True
+        elif (
+            self.ball.get("dunk_no_score_timer", 0) <= 0
+            and ball_crossed_hoop(prev_ball_y, self.ball, RIGHT_HOOP_X1, RIGHT_HOOP_X2)
+        ):
+            points = get_score_points_from_origin(self.ball, 1)
+            self.score[0] += points
+            scored = True
 
         if scored:
             self.reset_after_point()
+            self.message = f"Cesta de {points} pontos!"
+            self.message_timer = 120
 
             if self.score[0] >= self.level["target_score"]:
                 self.unlock_next_level()
@@ -1143,6 +1550,15 @@ class StoryMode:
         self.player["vel_y"] = 0
         self.player["is_jumping"] = False
         self.player["dash_timer"] = 0
+        self.player["dunk_active"] = 0
+        self.player["dunk_timer"] = 0
+        self.player["dunk_anim_timer"] = 0
+        self.player["dunk_ready_to_score"] = 0
+        self.player["dunk_sequence"] = []
+        self.player["dunk_index"] = 0
+        self.player["stun_timer"] = 0
+        self.player["knockback_timer"] = 0
+        self.player["knockback_vx"] = 0
 
         self.npc["x"] = WIDTH - 250
         self.npc["y"] = GROUND_Y - CHAR_H
@@ -1156,6 +1572,10 @@ class StoryMode:
         self.ball["vel_x"] = 0
         self.ball["vel_y"] = 0
         self.ball["holder"] = None
+        self.ball["dunk_no_score_timer"] = 0
+        self.ball["shot_origin_x"] = None
+        self.ball["shot_origin_y"] = None
+        self.ball["score_override"] = None
 
         self.message = "Ponto marcado! Bola no centro."
         self.message_timer = 120
@@ -1232,7 +1652,17 @@ class StoryMode:
                     self.player_throw(mouse_pos[0], mouse_pos[1])
 
                 if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_e:
+                    if self.player["dunk_active"] > 0:
+                        qte_key = qte_key_from_event(event)
+
+                        if qte_key:
+                            self.handle_dunk_qte(qte_key)
+                            continue
+
+                    if event.key == pygame.K_f:
+                        self.start_dunk()
+
+                    elif event.key == pygame.K_e:
                         self.use_player_ability()
 
                     elif event.key == pygame.K_ESCAPE:
