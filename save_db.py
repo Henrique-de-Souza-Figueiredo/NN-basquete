@@ -177,6 +177,30 @@ ACHIEVEMENT_DEFS = {
         "icon": "star",
         "character": "Paulo",
     },
+    "paulo_jackpot": {
+        "name": "JACKPOT!",
+        "description": "Consiga um JACKPOT usando a roleta do Paulo.",
+        "icon": "wheel",
+        "character": "Paulo",
+    },
+    "jackpot_witness": {
+        "name": "Eu Vi o Impossivel",
+        "description": "Esteja em quadra quando Paulo conseguir um JACKPOT.",
+        "icon": "star",
+        "characters": ("Henrique", "Natan", "John Jonh", "Presscinotti", "Rafael", "Diogo", "Miguel"),
+    },
+    "jackpot_ally": {
+        "name": "Time da Sorte",
+        "description": "Esteja no time do Paulo quando ele conseguir um JACKPOT.",
+        "icon": "crown",
+        "characters": ("Henrique", "Natan", "John Jonh", "Presscinotti", "Rafael", "Diogo", "Miguel"),
+    },
+    "jackpot_stopper": {
+        "name": "Anti-JACKPOT",
+        "description": "Venca uma partida contra um Paulo que conseguiu JACKPOT.",
+        "icon": "trophy",
+        "characters": ("Henrique", "Natan", "John Jonh", "Presscinotti", "Rafael", "Diogo", "Miguel"),
+    },
     "dunk_master": {
         "name": "Cravada Confirmada",
         "description": "Complete um QTE de dunk com este personagem.",

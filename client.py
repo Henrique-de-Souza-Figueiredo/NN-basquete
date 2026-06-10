@@ -415,8 +415,12 @@ class GameClient:
         self.shop_selected_skin = "default"
         self.shop_message = ""
         self.achievements_scroll = 0
+        self.achievement_notifications = []
+        self.current_achievement_notification = None
         self.last_seen_clash_id = None
         self.last_dunk_ready_state = 0
+        self.seen_jackpot_players = set()
+        self.opponent_jackpot_seen = False
 
         self.btn_create = Button("CRIAR SALA", WIDTH // 2 - 220, 430, 200, 60, TEAM_1_COLOR)
         self.btn_join = Button("ENTRAR", WIDTH // 2 + 20, 430, 200, 60, TEAM_2_COLOR)
@@ -1212,6 +1216,8 @@ class GameClient:
             money = max(10, money // 2)
             xp = max(12, xp // 2)
 
+        unlocked_before = self.get_unlocked_achievement_ids()
+
         save_db.add_money(money)
         save_db.add_character_xp(char_name, xp)
         save_db.record_match(char_name, won, baskets, points)
@@ -1226,6 +1232,11 @@ class GameClient:
         if {"Diogo", "Paulo"} <= chars_in_match:
             save_db.unlock_pair_achievement("Diogo", "Paulo", "chaos")
 
+        if won and self.opponent_jackpot_seen:
+            save_db.unlock_character_achievement(char_name, "jackpot_stopper")
+
+        self.enqueue_new_achievement_notifications(unlocked_before)
+
     def update_local_achievement_events(self):
         if not self.server_data or self.my_id not in self.server_data.get("players", {}):
             return
@@ -1236,7 +1247,10 @@ class GameClient:
         if not char_name:
             return
 
+        unlocked_before = None
+
         if my_data.get("dunk_ready_to_score", 0) > 0 and self.last_dunk_ready_state <= 0:
+            unlocked_before = self.get_unlocked_achievement_ids()
             save_db.unlock_character_achievement(char_name, "dunk_master")
 
         self.last_dunk_ready_state = my_data.get("dunk_ready_to_score", 0)
@@ -1244,6 +1258,9 @@ class GameClient:
         clash_id = my_data.get("clash_id", 0)
 
         if my_data.get("clash_active", 0) > 0 and clash_id and clash_id != self.last_seen_clash_id:
+            if unlocked_before is None:
+                unlocked_before = self.get_unlocked_achievement_ids()
+
             self.last_seen_clash_id = clash_id
             save_db.unlock_character_achievement(char_name, "clash_winner")
             opponent_id = my_data.get("clash_opponent")
@@ -1257,6 +1274,157 @@ class GameClient:
 
                 if pair == {"Henrique", "Miguel"}:
                     save_db.unlock_pair_achievement("Henrique", "Miguel", "clash")
+
+        if unlocked_before is not None:
+            self.enqueue_new_achievement_notifications(unlocked_before)
+
+    def update_jackpot_achievement_events(self):
+        if not self.server_data or self.my_id not in self.server_data.get("players", {}):
+            return
+
+        my_data = self.server_data["players"][self.my_id]
+        my_char = my_data.get("char")
+
+        if not my_char:
+            return
+
+        for player_id, player in self.server_data["players"].items():
+            if player.get("char") != "Paulo":
+                continue
+
+            has_jackpot = (
+                player.get("jackpot_timer", 0) > 0
+                or player.get("roleta_result") == "JACKPOT"
+                or player.get("roleta_state") == "CUTSCENE"
+            )
+
+            if not has_jackpot or player_id in self.seen_jackpot_players:
+                continue
+
+            self.seen_jackpot_players.add(player_id)
+            unlocked_before = self.get_unlocked_achievement_ids()
+
+            if player_id == self.my_id:
+                save_db.unlock_character_achievement("Paulo", "paulo_jackpot")
+            else:
+                save_db.unlock_character_achievement(my_char, "jackpot_witness")
+
+                if player.get("team") == my_data.get("team"):
+                    save_db.unlock_character_achievement(my_char, "jackpot_ally")
+                else:
+                    self.opponent_jackpot_seen = True
+
+            self.enqueue_new_achievement_notifications(unlocked_before)
+
+    def get_unlocked_achievement_ids(self):
+        return {item["achievement_id"] for item in save_db.get_achievements()}
+
+    def get_achievement_notification_data(self, achievement_id):
+        if achievement_id in save_db.PAIR_ACHIEVEMENT_DEFS:
+            data = save_db.PAIR_ACHIEVEMENT_DEFS[achievement_id]
+            return {
+                "name": data["name"],
+                "description": data["description"],
+                "character": " + ".join(data["characters"]),
+            }
+
+        if ":" not in achievement_id:
+            return None
+
+        character, suffix = achievement_id.split(":", 1)
+        data = save_db.ACHIEVEMENT_DEFS.get(suffix)
+
+        if not data:
+            return None
+
+        return {
+            "name": data["name"],
+            "description": data["description"],
+            "character": character,
+        }
+
+    def enqueue_new_achievement_notifications(self, unlocked_before):
+        unlocked_after = save_db.get_achievements()
+        new_items = [item for item in unlocked_after if item["achievement_id"] not in unlocked_before]
+
+        for item in reversed(new_items):
+            notification = self.get_achievement_notification_data(item["achievement_id"])
+
+            if notification:
+                notification["timer"] = 240
+                self.achievement_notifications.append(notification)
+
+    def render_wrapped_text(self, text, font, color, max_width):
+        lines = []
+        current = ""
+
+        for word in text.split():
+            candidate = word if not current else f"{current} {word}"
+
+            if font.size(candidate)[0] <= max_width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+
+        if current:
+            lines.append(current)
+
+        return [font.render(line, True, color) for line in lines]
+
+    def draw_achievement_notifications(self):
+        if not self.current_achievement_notification and self.achievement_notifications:
+            self.current_achievement_notification = self.achievement_notifications.pop(0)
+
+        notification = self.current_achievement_notification
+
+        if not notification:
+            return
+
+        notification["timer"] -= 1
+
+        if notification["timer"] <= 0:
+            self.current_achievement_notification = None
+            return
+
+        timer = notification["timer"]
+        panel_w = 500
+        panel_h = 118
+        target_x = WIDTH - panel_w - 24
+        slide = min(1.0, (240 - timer) / 18)
+
+        if timer < 28:
+            slide = min(slide, timer / 28)
+
+        x = int(WIDTH - (WIDTH - target_x) * slide)
+        y = 92
+        rect = pygame.Rect(x, y, panel_w, panel_h)
+
+        shadow = rect.move(6, 6)
+        pygame.draw.rect(screen, (0, 0, 0), shadow, border_radius=18)
+        pygame.draw.rect(screen, (18, 18, 22), rect, border_radius=18)
+        pygame.draw.rect(screen, (255, 140, 0), rect, 3, border_radius=18)
+
+        pygame.draw.circle(screen, BALL_COLOR, (x + 52, y + 58), 28)
+        pygame.draw.circle(screen, BLACK, (x + 52, y + 58), 28, 3)
+        pygame.draw.arc(screen, BLACK, (x + 32, y + 38, 40, 40), -1.2, 1.2, 3)
+        pygame.draw.line(screen, BLACK, (x + 52, y + 30), (x + 52, y + 86), 3)
+        pygame.draw.line(screen, BLACK, (x + 26, y + 58), (x + 78, y + 58), 3)
+
+        header = font_sm.render("CONQUISTA DESBLOQUEADA", True, (255, 215, 90))
+        title = font_md.render(notification["name"], True, WHITE)
+        character = font_sm.render(notification["character"], True, (255, 180, 90))
+        desc_lines = self.render_wrapped_text(notification["description"], font_sm, (220, 220, 220), panel_w - 125)
+
+        screen.blit(header, (x + 98, y + 14))
+        screen.blit(title, (x + 98, y + 36))
+        screen.blit(character, (x + panel_w - character.get_width() - 18, y + 18))
+
+        desc_y = y + 72
+        for line in desc_lines[:2]:
+            screen.blit(line, (x + 98, desc_y))
+            desc_y += 22
 
     def draw_player_image(self, p_data, color):
         char_name = p_data.get("char")
@@ -1646,7 +1814,9 @@ class GameClient:
                             ability_achievement = ABILITY_ACHIEVEMENTS.get(my_p.get("char"))
 
                             if ability_achievement:
+                                unlocked_before = self.get_unlocked_achievement_ids()
                                 save_db.unlock_character_achievement(my_p["char"], ability_achievement)
+                                self.enqueue_new_achievement_notifications(unlocked_before)
 
                             if CHARACTERS[self.selected_char_idx] in ["Diogo", "Paulo"]:
                                 self.ability_cooldown = 480
@@ -1908,6 +2078,7 @@ class GameClient:
                 if self.server_data:
                     self.check_replay_trigger()
                     self.update_local_achievement_events()
+                    self.update_jackpot_achievement_events()
 
                 if not self.server_data:
                     self.state = "MENU"
@@ -1920,6 +2091,10 @@ class GameClient:
 
                     elif self.state == "LOBBY" and self.server_data["game_started"]:
                         self.state = "PLAYING"
+                        self.seen_jackpot_players.clear()
+                        self.opponent_jackpot_seen = False
+                        self.last_seen_clash_id = None
+                        self.last_dunk_ready_state = 0
 
                         my_data = self.server_data["players"][self.my_id]
                         self.player_x = my_data["x"]
@@ -1978,6 +2153,7 @@ class GameClient:
             elif self.state == "GAME_OVER":
                 self.draw_game_over()
 
+            self.draw_achievement_notifications()
             pygame.display.flip()
 
         if self.net.connected:

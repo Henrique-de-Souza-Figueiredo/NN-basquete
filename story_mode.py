@@ -697,6 +697,30 @@ class StoryMode:
             txt = font_md.render(line, True, color)
             screen.blit(txt, (x, y + i * line_height))
 
+    def draw_wrapped_paragraph(self, text, font, x, y, max_width, color=WHITE, line_height=24):
+        current = ""
+
+        for word in text.split():
+            candidate = word if not current else f"{current} {word}"
+
+            if font.size(candidate)[0] <= max_width:
+                current = candidate
+                continue
+
+            if current:
+                txt = font.render(current, True, color)
+                screen.blit(txt, (x, y))
+                y += line_height
+
+            current = word
+
+        if current:
+            txt = font.render(current, True, color)
+            screen.blit(txt, (x, y))
+            y += line_height
+
+        return y
+
     def draw_menu(self):
         screen.fill((20, 20, 35))
 
@@ -760,18 +784,48 @@ class StoryMode:
                 target_h = int(target_w / img_ratio)
 
             img = pygame.transform.scale(img, (target_w, target_h))
-            screen.blit(img, (WIDTH // 2 - target_w // 2, HEIGHT // 2 - target_h // 2))
+            image_x = WIDTH // 2 - target_w // 2
+            image_y = HEIGHT // 2 - target_h // 2
+            screen.blit(img, (image_x, image_y))
 
-            overlay = pygame.Surface((WIDTH, 190), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 200))
-            screen.blit(overlay, (0, HEIGHT - 190))
+            left_w = image_x
+            right_x = image_x + target_w
+            right_w = WIDTH - right_x
+            margin = 26
 
-            title_txt = font_lg.render(title, True, (255, 215, 0))
-            screen.blit(title_txt, (40, HEIGHT - 175))
+            if left_w >= 260 and right_w >= 260:
+                pygame.draw.rect(screen, (10, 10, 18), (0, 0, left_w, HEIGHT))
+                pygame.draw.rect(screen, (10, 10, 18), (right_x, 0, right_w, HEIGHT))
+                pygame.draw.line(screen, (255, 215, 0), (image_x, 0), (image_x, HEIGHT), 3)
+                pygame.draw.line(screen, (255, 215, 0), (right_x, 0), (right_x, HEIGHT), 3)
 
-            if objective:
-                obj = font_md.render(objective, True, WHITE)
-                screen.blit(obj, (40, HEIGHT - 105))
+                title_y = 34
+                title_txt = font_md.render(title, True, (255, 215, 0))
+                screen.blit(title_txt, (margin, title_y))
+
+                story_y = title_y + 58
+
+                for line in lines:
+                    story_y = self.draw_wrapped_paragraph(line, font_sm, margin, story_y, left_w - margin * 2, WHITE, 24)
+                    story_y += 10
+
+                if objective:
+                    obj_title = font_md.render("Objetivo", True, (255, 215, 0))
+                    screen.blit(obj_title, (right_x + margin, 42))
+                    self.draw_wrapped_paragraph(objective, font_sm, right_x + margin, 92, right_w - margin * 2, (230, 230, 230), 24)
+
+            else:
+                panel_h = 140
+                panel_y = HEIGHT - panel_h
+                pygame.draw.rect(screen, (10, 10, 18), (0, panel_y, WIDTH, panel_h))
+                pygame.draw.line(screen, (255, 215, 0), (0, panel_y), (WIDTH, panel_y), 3)
+
+                title_txt = font_md.render(title, True, (255, 215, 0))
+                screen.blit(title_txt, (40, panel_y + 12))
+
+                if objective:
+                    obj = font_sm.render(objective, True, (230, 230, 230))
+                    screen.blit(obj, (40, panel_y + 58))
 
         else:
             screen.fill((25, 25, 40))
