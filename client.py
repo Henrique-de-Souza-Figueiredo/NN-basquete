@@ -43,7 +43,7 @@ def normalize_audio_name(char_name):
     name = char_name.lower().replace(" ", "").replace("_", "")
 
     if name == "johnjonh":
-        return "johnjohn"
+        return "johnjonh"
 
     return name
 
@@ -156,10 +156,12 @@ def can_start_dunk_locally(player_data, ball):
     hoop_x, hoop_y = get_attack_hoop(player_data["team"])
     player_cx = player_data["x"] + CHAR_W / 2
     player_cy = player_data["y"] + CHAR_H / 2
+    range_bonus_x = 45 if player_data.get("dunk_buff_timer", 0) > 0 else 0
+    range_bonus_y = 35 if player_data.get("dunk_buff_timer", 0) > 0 else 0
 
     return (
-        abs(player_cx - hoop_x) <= DUNK_RANGE_X
-        and abs(player_cy - hoop_y) <= DUNK_RANGE_Y
+        abs(player_cx - hoop_x) <= DUNK_RANGE_X + range_bonus_x
+        and abs(player_cy - hoop_y) <= DUNK_RANGE_Y + range_bonus_y
     )
 
 
@@ -199,18 +201,157 @@ def draw_skin_overlay(surface, x, y, w, h, skin_id, scale=1.0):
 
     color = cosmetic["color"]
     accent = cosmetic["accent"]
+    ticks = pygame.time.get_ticks()
+    pulse = (math.sin(ticks / 180) + 1) / 2
+    center_x = int(x + w / 2)
+    center_y = int(y + h / 2)
     torso = pygame.Rect(x + int(w * 0.12), y + int(h * 0.32), int(w * 0.76), int(h * 0.36))
     shorts = pygame.Rect(x + int(w * 0.18), y + int(h * 0.66), int(w * 0.64), int(h * 0.18))
 
-    pygame.draw.rect(surface, color, torso, border_radius=max(2, int(6 * scale)))
-    pygame.draw.rect(surface, accent, shorts, border_radius=max(2, int(5 * scale)))
-    pygame.draw.line(surface, accent, (torso.left, torso.top), (torso.right, torso.top), max(1, int(3 * scale)))
+    effect = cosmetic.get("effect")
 
-    if skin_id in ["blue_star", "gold_royal"]:
-        pygame.draw.circle(surface, accent, torso.center, max(2, int(w * 0.09)))
+    if effect == "glow":
+        radius = int(max(w, h) * (0.55 + pulse * 0.12))
+        pygame.draw.circle(surface, (*accent, 70), (center_x, center_y), radius, max(1, int(4 * scale)))
+    elif effect == "shine":
+        pygame.draw.circle(surface, accent, (center_x, int(y + h * 0.12)), max(2, int((3 + pulse * 3) * scale)))
+        pygame.draw.line(surface, accent, (center_x, int(y - h * 0.08)), (center_x, int(y + h * 0.05)), max(1, int(2 * scale)))
+    elif effect == "ember":
+        for i in range(3):
+            spark_x = int(x + w * (0.2 + i * 0.3))
+            spark_y = int(y + h * (0.25 + ((ticks // 90 + i) % 5) * 0.12))
+            pygame.draw.circle(surface, accent, (spark_x, spark_y), max(1, int(2 * scale)))
+    elif effect == "bounce":
+        arc_y = int(y + h + 4 * scale + pulse * 5 * scale)
+        pygame.draw.arc(surface, color, (int(x - w * 0.1), arc_y, int(w * 1.2), int(h * 0.25)), 0, math.pi, max(1, int(2 * scale)))
+    elif effect == "stars":
+        for i in range(4):
+            angle = ticks / 400 + i * math.pi / 2
+            sx = int(center_x + math.cos(angle) * w * 0.65)
+            sy = int(center_y + math.sin(angle) * h * 0.48)
+            pygame.draw.circle(surface, accent, (sx, sy), max(1, int(2 * scale)))
+    elif effect == "speed":
+        for i in range(3):
+            yy = int(y + h * (0.25 + i * 0.18))
+            offset = int((ticks // 70 + i * 9) % max(1, int(w * 0.35)))
+            pygame.draw.line(surface, accent, (int(x - w * 0.2) + offset, yy), (int(x + w * 0.22) + offset, yy), max(1, int(2 * scale)))
+    elif effect == "shadow_aura":
+        aura = pygame.Rect(int(x - w * 0.12), int(y + h * 0.1), int(w * 1.24), int(h * 0.88))
+        pygame.draw.ellipse(surface, (*accent, 80), aura, max(1, int(3 * scale)))
+        pygame.draw.circle(surface, accent, (int(x + w * 0.18), int(y + h * (0.2 + pulse * 0.55))), max(1, int(2 * scale)))
+    elif effect == "crumbs":
+        for i in range(5):
+            crumb_x = int(x + w * (0.12 + i * 0.18))
+            crumb_y = int(y + h * (0.18 + ((ticks // 120 + i) % 4) * 0.18))
+            pygame.draw.circle(surface, accent, (crumb_x, crumb_y), max(1, int((1.5 + (i % 2)) * scale)))
+    elif effect == "jackpot":
+        pygame.draw.circle(surface, accent, (center_x, center_y), int(max(w, h) * (0.42 + pulse * 0.08)), max(1, int(2 * scale)))
+        for i, label in enumerate(["7", "$", "7"]):
+            if scale > 2:
+                txt = font_sm.render(label, True, accent)
+                surface.blit(txt, (int(x + w * (0.25 + i * 0.2)), int(y + h * 0.04)))
+    elif effect == "lightning":
+        pts = [
+            (int(x + w * 0.58), int(y + h * 0.05)),
+            (int(x + w * 0.42), int(y + h * 0.42)),
+            (int(x + w * 0.56), int(y + h * 0.42)),
+            (int(x + w * 0.38), int(y + h * 0.84)),
+        ]
+        pygame.draw.lines(surface, accent, False, pts, max(1, int(3 * scale)))
+    elif effect == "ice":
+        for i in range(3):
+            spike_x = int(x + w * (0.18 + i * 0.32))
+            pygame.draw.polygon(
+                surface,
+                accent,
+                [
+                    (spike_x, int(y + h * 0.1)),
+                    (spike_x - int(5 * scale), int(y + h * 0.24)),
+                    (spike_x + int(5 * scale), int(y + h * 0.24)),
+                ],
+            )
+    elif effect == "toxic":
+        for i in range(3):
+            bubble_x = int(x + w * (0.22 + i * 0.28))
+            bubble_y = int(y + h * (0.7 - pulse * 0.22 + i * 0.04))
+            pygame.draw.circle(surface, color, (bubble_x, bubble_y), max(1, int((3 + i) * scale)), max(1, int(1 * scale)))
 
-    if skin_id == "shadow":
-        pygame.draw.line(surface, accent, (torso.left, torso.bottom), (torso.right, torso.top), max(1, int(3 * scale)))
+    if cosmetic.get("outfit", True):
+        pygame.draw.rect(surface, color, torso, border_radius=max(2, int(6 * scale)))
+        pygame.draw.rect(surface, accent, shorts, border_radius=max(2, int(5 * scale)))
+        pygame.draw.line(surface, accent, (torso.left, torso.top), (torso.right, torso.top), max(1, int(3 * scale)))
+
+        if skin_id in ["blue_star", "gold_royal", "jackpot_orange", "galaxy_set"]:
+            pygame.draw.circle(surface, accent, torso.center, max(2, int(w * 0.09)))
+
+        if skin_id in ["shadow", "havoc_black"]:
+            pygame.draw.line(surface, accent, (torso.left, torso.bottom), (torso.right, torso.top), max(1, int(3 * scale)))
+
+        if skin_id == "midnight_blue":
+            pygame.draw.line(surface, accent, (torso.left, torso.centery), (torso.right, torso.centery), max(1, int(2 * scale)))
+            pygame.draw.circle(surface, accent, (torso.centerx, torso.top + max(2, int(5 * scale))), max(1, int(w * 0.05)))
+
+        if skin_id == "cookie_cream":
+            dot_radius = max(1, int(w * 0.035))
+            pygame.draw.circle(surface, accent, (torso.left + int(w * 0.2), torso.centery), dot_radius)
+            pygame.draw.circle(surface, accent, (torso.right - int(w * 0.18), torso.top + int(h * 0.1)), dot_radius)
+            pygame.draw.circle(surface, accent, (shorts.centerx, shorts.centery), dot_radius)
+
+    hat = cosmetic.get("hat")
+
+    if hat == "crown":
+        base_y = int(y + h * 0.08)
+        points = [
+            (int(x + w * 0.15), base_y + int(10 * scale)),
+            (int(x + w * 0.28), base_y - int(7 * scale)),
+            (int(x + w * 0.42), base_y + int(7 * scale)),
+            (int(x + w * 0.55), base_y - int(9 * scale)),
+            (int(x + w * 0.72), base_y + int(8 * scale)),
+            (int(x + w * 0.86), base_y - int(6 * scale)),
+            (int(x + w * 0.9), base_y + int(11 * scale)),
+        ]
+        pygame.draw.polygon(surface, color, points)
+        pygame.draw.line(surface, accent, points[0], points[-1], max(1, int(2 * scale)))
+    elif hat == "propeller":
+        cap = pygame.Rect(int(x + w * 0.16), int(y + h * 0.02), int(w * 0.68), int(h * 0.12))
+        pygame.draw.rect(surface, color, cap, border_radius=max(2, int(5 * scale)))
+        prop_y = cap.top - int(6 * scale)
+        pygame.draw.line(surface, accent, (center_x - int(w * 0.35), prop_y), (center_x + int(w * 0.35), prop_y), max(1, int(3 * scale)))
+        pygame.draw.line(surface, color, (center_x, prop_y - int(5 * scale)), (center_x, prop_y + int(5 * scale)), max(1, int(2 * scale)))
+    elif hat == "halo":
+        halo_rect = pygame.Rect(int(x + w * 0.12), int(y - h * 0.05), int(w * 0.76), int(h * 0.16))
+        pygame.draw.ellipse(surface, color, halo_rect, max(1, int(3 * scale)))
+        pygame.draw.ellipse(surface, accent, halo_rect.inflate(int(5 * scale), int(5 * scale)), max(1, int(1 * scale)))
+    elif hat == "cap":
+        cap = pygame.Rect(int(x + w * 0.12), int(y + h * 0.04), int(w * 0.68), int(h * 0.12))
+        brim = pygame.Rect(int(x + w * 0.58), int(y + h * 0.08), int(w * 0.34), int(h * 0.045))
+        pygame.draw.rect(surface, color, cap, border_radius=max(2, int(5 * scale)))
+        pygame.draw.rect(surface, accent, brim, border_radius=max(1, int(3 * scale)))
+
+    shoes = cosmetic.get("shoes")
+
+    if shoes:
+        left_shoe = pygame.Rect(int(x + w * 0.05), int(y + h * 0.86), int(w * 0.38), int(h * 0.12))
+        right_shoe = pygame.Rect(int(x + w * 0.57), int(y + h * 0.86), int(w * 0.38), int(h * 0.12))
+        pygame.draw.rect(surface, color, left_shoe, border_radius=max(2, int(5 * scale)))
+        pygame.draw.rect(surface, color, right_shoe, border_radius=max(2, int(5 * scale)))
+        pygame.draw.line(surface, accent, left_shoe.midleft, left_shoe.midright, max(1, int(2 * scale)))
+        pygame.draw.line(surface, accent, right_shoe.midleft, right_shoe.midright, max(1, int(2 * scale)))
+
+        if shoes == "fire":
+            pygame.draw.polygon(surface, accent, [(left_shoe.left, left_shoe.top), (left_shoe.left - int(6 * scale), left_shoe.centery), (left_shoe.left, left_shoe.bottom)])
+            pygame.draw.polygon(surface, accent, [(right_shoe.right, right_shoe.top), (right_shoe.right + int(6 * scale), right_shoe.centery), (right_shoe.right, right_shoe.bottom)])
+        elif shoes == "toole":
+            eye_r = max(1, int(2 * scale))
+            pygame.draw.circle(surface, WHITE, (left_shoe.centerx, left_shoe.top), eye_r)
+            pygame.draw.circle(surface, WHITE, (right_shoe.centerx, right_shoe.top), eye_r)
+            if scale > 2:
+                label = font_sm.render("TOOLE", True, accent)
+                label = pygame.transform.scale(label, (max(18, int(w * 0.48)), max(7, int(h * 0.06))))
+                surface.blit(label, (int(x + w * 0.26), int(y + h * 0.99)))
+        elif shoes == "star":
+            pygame.draw.circle(surface, accent, left_shoe.center, max(1, int(3 * scale)))
+            pygame.draw.circle(surface, accent, right_shoe.center, max(1, int(3 * scale)))
 
 
 def predict_ball_path(ball, target_x, target_y, power, steps=180):
@@ -410,10 +551,12 @@ class GameClient:
         self.reward_applied_for_replay_id = None
         self.reward_message = ""
         self.current_goal_sound = None
+        self.skip_replay_requested = False
         self.reward_applied_for_replay_id = None
         self.reward_message = ""
         self.shop_selected_skin = "default"
         self.shop_message = ""
+        self.shop_scroll = 0
         self.achievements_scroll = 0
         self.achievement_notifications = []
         self.current_achievement_notification = None
@@ -591,13 +734,13 @@ class GameClient:
             except pygame.error:
                 print(f"[AVISO] Não foi possível tocar o áudio: {audio_path}")
 
-    def stop_replay_local(self):
+    def stop_replay_local(self, stop_audio=False):
         self.replay_playing = False
         self.replay_frames = []
         self.replay_index = 0
         self.replay_tick = 0
 
-        if self.current_goal_sound:
+        if stop_audio and self.current_goal_sound:
             self.current_goal_sound.stop()
             self.current_goal_sound = None
 
@@ -614,7 +757,8 @@ class GameClient:
         replay_timer = self.server_data.get("replay_timer", 0)
 
         if self.replay_playing and replay_timer <= 0:
-            self.stop_replay_local()
+            self.stop_replay_local(stop_audio=self.skip_replay_requested)
+            self.skip_replay_requested = False
 
             if self.server_data and self.my_id in self.server_data.get("players", {}):
                 my_data = self.server_data["players"][self.my_id]
@@ -802,22 +946,46 @@ class GameClient:
             screen.blit(txt, (rect.x + 8, rect.y + 7))
 
         self.shop_skin_rects = []
+        skin_items = list(COSMETICS.items())
+        visible_top = 190
+        visible_bottom = HEIGHT - 170
+        max_scroll = max(0, len(skin_items) * 72 - (visible_bottom - visible_top))
+        self.shop_scroll = max(0, min(self.shop_scroll, max_scroll))
 
-        for i, (skin_id, cosmetic) in enumerate(COSMETICS.items()):
-            rect = pygame.Rect(45, 190 + i * 72, 420, 58)
+        for i, (skin_id, cosmetic) in enumerate(skin_items):
+            rect = pygame.Rect(45, visible_top + i * 72 - self.shop_scroll, 420, 58)
+
+            if rect.bottom < visible_top or rect.top > visible_bottom:
+                continue
+
             self.shop_skin_rects.append((rect, skin_id))
             selected = skin_id == self.shop_selected_skin
             pygame.draw.rect(screen, (55, 90, 85) if selected else (35, 45, 50), rect, border_radius=10)
             pygame.draw.rect(screen, (120, 240, 200) if selected else GRAY, rect, 2, border_radius=10)
 
             status = "EQUIPADA" if skin_id == equipped else ("COMPRADA" if skin_id in owned else f"${cosmetic['price']}")
-            txt = font_sm.render(f"{cosmetic['name']} - {status}", True, WHITE)
-            screen.blit(txt, (rect.x + 15, rect.y + 18))
+            item_type = cosmetic.get("item_type", "Roupa")
+            txt = font_sm.render(f"[{item_type}] {cosmetic['name']} - {status}", True, WHITE)
+            screen.blit(txt, (rect.x + 15, rect.y + 11))
+
+            if cosmetic.get("effect"):
+                effect_txt = font_sm.render("Efeito visual", True, (120, 240, 200))
+                screen.blit(effect_txt, (rect.x + 15, rect.y + 33))
+
+        if max_scroll > 0:
+            bar_h = max(35, int((visible_bottom - visible_top) * (visible_bottom - visible_top) / (len(skin_items) * 72)))
+            bar_y = visible_top + int((visible_bottom - visible_top - bar_h) * (self.shop_scroll / max_scroll))
+            pygame.draw.rect(screen, (45, 60, 65), (475, visible_top, 10, visible_bottom - visible_top), border_radius=5)
+            pygame.draw.rect(screen, (120, 240, 200), (475, bar_y, 10, bar_h), border_radius=5)
 
         self.draw_character_preview(char_name, self.shop_selected_skin, WIDTH - 510, 150, self.card_w * 2, self.card_h)
 
         info_txt = font_md.render(COSMETICS[self.shop_selected_skin]["name"], True, WHITE)
         screen.blit(info_txt, (WIDTH - 530, 150 + self.card_h + 20))
+
+        selected_cosmetic = COSMETICS[self.shop_selected_skin]
+        type_txt = font_sm.render(f"Tipo: {selected_cosmetic.get('item_type', 'Roupa')}", True, (180, 220, 220))
+        screen.blit(type_txt, (WIDTH - 530, 150 + self.card_h + 58))
 
         self.btn_shop_buy.draw(screen)
         self.btn_shop_equip.draw(screen)
@@ -1556,6 +1724,7 @@ class GameClient:
                 p_data.get("cookie_buff_timer", 0) > 0
                 or p_data.get("jump_buff_timer", 0) > 0
                 or p_data.get("throw_buff_timer", 0) > 0
+                or p_data.get("dunk_buff_timer", 0) > 0
             )
 
             has_debuff = (
@@ -1638,7 +1807,8 @@ class GameClient:
             pygame.draw.circle(screen, (255, 0, 0), (mx, my), 5)
 
             if can_start_dunk_locally(my_p_data, ball):
-                dunk_txt = font_md.render("DUNK: aperte F perto da cesta", True, (255, 230, 80))
+                dunk_label = "DUNK FACIL: aperte F" if my_p_data.get("dunk_buff_timer", 0) > 0 else "DUNK: aperte F perto da cesta"
+                dunk_txt = font_md.render(dunk_label, True, (255, 230, 80))
                 screen.blit(dunk_txt, (WIDTH // 2 - dunk_txt.get_width() // 2, HEIGHT - 105))
 
         if my_p_data.get("dunk_active", 0) > 0:
@@ -1647,7 +1817,8 @@ class GameClient:
             timer = max(0, my_p_data.get("dunk_timer", 0))
 
             pygame.draw.rect(screen, BLACK, (WIDTH // 2 - 310, 105, 620, 115), border_radius=14)
-            title = font_md.render("DUNK QTE", True, (255, 230, 80))
+            qte_title = "DUNK QTE - BUFF FACIL" if my_p_data.get("dunk_buff_timer", 0) > 0 else "DUNK QTE"
+            title = font_md.render(qte_title, True, (255, 230, 80))
             screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 115))
 
             x = WIDTH // 2 - len(sequence) * 32
@@ -1759,6 +1930,10 @@ class GameClient:
                             continue
 
                         if self.replay_playing and self.btn_skip_replay.is_clicked(mouse_pos):
+                            self.skip_replay_requested = True
+                            if self.current_goal_sound:
+                                self.current_goal_sound.stop()
+                                self.current_goal_sound = None
                             data_to_send["action"] = "SKIP_REPLAY"
                             continue
 
@@ -1904,6 +2079,9 @@ class GameClient:
 
                             self.stop_local_server()
                 elif self.state == "SHOP":
+                    if event.type == pygame.MOUSEWHEEL:
+                        self.shop_scroll -= event.y * 45
+
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         if self.btn_shop_back.is_clicked(mouse_pos):
                             self.state = "MENU"

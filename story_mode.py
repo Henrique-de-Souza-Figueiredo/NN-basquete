@@ -363,7 +363,7 @@ STORY_LEVELS = [
         "enemy_team": "Atacantes Falastrões",
         "difficulty": 3,
         "target_score": 8,
-        "cutscene": "cutscene_prescinotti.png",
+        "cutscene": "cutscene_presscinotti.png",
         "objective": "Use as orelhas para empurrar e defender.",
         "story": [
             "Todos riam das orelhas de Presscinotti.",
@@ -547,6 +547,8 @@ class StoryMode:
         self.btn_reset_save = Button("RESETAR PROGRESSO", WIDTH // 2 - 180, 460, 360, 60, (160, 90, 40))
         self.btn_quit = Button("SAIR", WIDTH // 2 - 180, 540, 360, 60, (180, 40, 40))
 
+        self.btn_confirm_reset = Button("CONFIRMAR", WIDTH // 2 - 250, 430, 220, 55, (190, 45, 45))
+        self.btn_cancel_reset = Button("CANCELAR", WIDTH // 2 + 30, 430, 220, 55, TEAM_1_COLOR)
         self.btn_continue = Button("CONTINUAR", WIDTH - 260, HEIGHT - 80, 220, 55, TEAM_1_COLOR)
         self.btn_back = Button("VOLTAR", 40, HEIGHT - 80, 180, 55, (180, 40, 40))
         self.btn_retry = Button("TENTAR NOVAMENTE", WIDTH // 2 - 180, 400, 360, 60, TEAM_1_COLOR)
@@ -555,7 +557,7 @@ class StoryMode:
 
         self.level_buttons = []
         self.make_level_buttons()
-
+        self.reset_confirm_open = False
         self.reset_match()
 
     def make_level_buttons(self):
@@ -671,6 +673,8 @@ class StoryMode:
         self.message = self.level["objective"]
         self.message_timer = 180
         self.winner = None
+        self.story_reward_applied = False
+        self.story_reward_message = ""
 
     def start_intro_cutscene(self):
         self.state = "INTRO_CUTSCENE"
@@ -689,8 +693,33 @@ class StoryMode:
         self.unlocked_level = 1
         save_progress(1)
         self.level_index = 0
+        self.reset_confirm_open = False
         self.reset_match()
         self.state = "MENU"
+
+    def apply_story_rewards_once(self):
+        if self.story_reward_applied:
+            return
+
+        char_name = self.level["player_char"]
+        difficulty = int(self.level.get("difficulty", 1))
+        points_for = int(self.score[0])
+        points_against = int(self.score[1])
+        baskets = max(1, points_for // 2)
+
+        money = 35 + difficulty * 12 + points_for * 3
+        xp = 45 + difficulty * 18 + points_for * 5
+
+        if points_against == 0:
+            money += 20
+            xp += 25
+
+        save_db.add_money(money)
+        save_db.add_character_xp(char_name, xp)
+        save_db.record_match(char_name, True, baskets, points_for)
+
+        self.story_reward_applied = True
+        self.story_reward_message = f"Recompensa: +${money}  +{xp} XP para {char_name}"
 
     def draw_text_wrapped(self, lines, x, y, color=WHITE, line_height=34):
         for i, line in enumerate(lines):
@@ -740,6 +769,24 @@ class StoryMode:
 
         tip = font_sm.render("Aperte ESC durante a partida para voltar ao menu.", True, GRAY)
         screen.blit(tip, (WIDTH // 2 - tip.get_width() // 2, 640))
+
+        if self.reset_confirm_open:
+            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180))
+            screen.blit(overlay, (0, 0))
+
+            panel = pygame.Rect(WIDTH // 2 - 360, 245, 720, 270)
+            pygame.draw.rect(screen, (18, 18, 28), panel, border_radius=18)
+            pygame.draw.rect(screen, (255, 90, 70), panel, 3, border_radius=18)
+
+            title = font_lg.render("APAGAR PROGRESSO", True, (255, 120, 90))
+            screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 275))
+
+            warning = font_md.render("Isso vai voltar o modo história para a fase 1.", True, WHITE)
+            screen.blit(warning, (WIDTH // 2 - warning.get_width() // 2, 350))
+
+            self.btn_confirm_reset.draw(screen)
+            self.btn_cancel_reset.draw(screen)
 
     def draw_level_select(self):
         screen.fill((20, 20, 35))
@@ -1069,6 +1116,10 @@ class StoryMode:
         score_txt = font_lg.render(f"Placar: {self.score[0]} x {self.score[1]}", True, WHITE)
         screen.blit(score_txt, (WIDTH // 2 - score_txt.get_width() // 2, 310))
 
+        if self.state == "WIN" and self.story_reward_message:
+            reward_txt = font_md.render(self.story_reward_message, True, (255, 230, 120))
+            screen.blit(reward_txt, (WIDTH // 2 - reward_txt.get_width() // 2, 370))
+
         self.btn_menu.draw(screen)
 
     def draw_ending(self):
@@ -1336,6 +1387,7 @@ class StoryMode:
         self.message_timer = 120
 
         if self.score[0] >= self.level["target_score"]:
+            self.apply_story_rewards_once()
             self.unlock_next_level()
             self.state = "WIN"
 
@@ -1592,6 +1644,7 @@ class StoryMode:
             self.message_timer = 120
 
             if self.score[0] >= self.level["target_score"]:
+                self.apply_story_rewards_once()
                 self.unlock_next_level()
                 self.state = "WIN"
 
@@ -1651,14 +1704,23 @@ class StoryMode:
 
             if self.state == "MENU":
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if self.reset_confirm_open:
+                        if self.btn_confirm_reset.is_clicked(mouse_pos):
+                            self.reset_progress()
+                        elif self.btn_cancel_reset.is_clicked(mouse_pos):
+                            self.reset_confirm_open = False
+                        continue
+
                     if self.btn_start.is_clicked(mouse_pos):
+                        self.reset_confirm_open = False
                         self.start_intro_cutscene()
 
                     elif self.btn_level_select.is_clicked(mouse_pos):
+                        self.reset_confirm_open = False
                         self.state = "LEVEL_SELECT"
 
                     elif self.btn_reset_save.is_clicked(mouse_pos):
-                        self.reset_progress()
+                        self.reset_confirm_open = True
 
                     elif self.btn_quit.is_clicked(mouse_pos):
                         self.running = False
@@ -1787,3 +1849,4 @@ class StoryMode:
 if __name__ == "__main__":
     game = StoryMode()
     game.run()
+

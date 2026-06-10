@@ -18,13 +18,14 @@ ROLETA_OUTCOMES = [
     "BUFF_BOLACHA",
     "BUFF_PULO",
     "BUFF_FORCA",
+    "BUFF_DUNK",
     "DEBUFF_PULO",
     "DEBUFF_VELOCIDADE",
     "DEBUFF_FORCA",
     "JACKPOT"
 ]
 
-ROLETA_WEIGHTS = [20, 20, 14, 14, 14, 14, 4]
+ROLETA_WEIGHTS = [22, 22, 18, 14, 6, 6, 6, 6]
 
 ABILITY_COOLDOWNS = {
     "Diogo": 480,
@@ -99,6 +100,7 @@ def is_timed_ability_active(p):
             or p.get("cookie_buff_timer", 0) > 0
             or p.get("jump_buff_timer", 0) > 0
             or p.get("throw_buff_timer", 0) > 0
+            or p.get("dunk_buff_timer", 0) > 0
             or p.get("jump_debuff_timer", 0) > 0
             or p.get("speed_debuff_timer", 0) > 0
             or p.get("throw_debuff_timer", 0) > 0
@@ -253,6 +255,7 @@ def reset_player_status(p_data):
         "jackpot_timer",
         "jump_buff_timer",
         "throw_buff_timer",
+        "dunk_buff_timer",
         "jump_debuff_timer",
         "speed_debuff_timer",
         "throw_debuff_timer",
@@ -328,20 +331,24 @@ def can_start_dunk(player, ball, player_id):
     hoop_x, hoop_y = get_attack_hoop(player["team"])
     player_cx = player["x"] + CHAR_W / 2
     player_cy = player["y"] + CHAR_H / 2
+    range_bonus_x = 45 if player.get("dunk_buff_timer", 0) > 0 else 0
+    range_bonus_y = 35 if player.get("dunk_buff_timer", 0) > 0 else 0
 
     return (
-        abs(player_cx - hoop_x) <= DUNK_RANGE_X
-        and abs(player_cy - hoop_y) <= DUNK_RANGE_Y
+        abs(player_cx - hoop_x) <= DUNK_RANGE_X + range_bonus_x
+        and abs(player_cy - hoop_y) <= DUNK_RANGE_Y + range_bonus_y
     )
 
 
 def start_dunk(player):
     hoop_x, hoop_y = get_attack_hoop(player["team"])
+    easy_dunk = player.get("dunk_buff_timer", 0) > 0
     player["dunk_active"] = 1
-    player["dunk_timer"] = DUNK_TIMER
+    player["dunk_timer"] = DUNK_TIMER + (45 if easy_dunk else 0)
     player["dunk_anim_timer"] = 0
     player["dunk_ready_to_score"] = 0
-    player["dunk_sequence"] = [random.choice(DUNK_KEYS) for _ in range(DUNK_SEQUENCE_LEN)]
+    sequence_len = max(3, DUNK_SEQUENCE_LEN - 2) if easy_dunk else DUNK_SEQUENCE_LEN
+    player["dunk_sequence"] = [random.choice(DUNK_KEYS) for _ in range(sequence_len)]
     player["dunk_index"] = 0
     player["dunk_score_team"] = player["team"]
     player["dunk_start_x"] = player["x"]
@@ -831,6 +838,8 @@ def room_physics_loop(room_code):
                             p["jump_buff_timer"] = 300
                         elif outcome == "BUFF_FORCA":
                             p["throw_buff_timer"] = 300
+                        elif outcome == "BUFF_DUNK":
+                            p["dunk_buff_timer"] = 420
                         elif outcome == "DEBUFF_PULO":
                             p["jump_debuff_timer"] = 300
                         elif outcome == "DEBUFF_VELOCIDADE":
@@ -860,6 +869,9 @@ def room_physics_loop(room_code):
 
             if p.get("throw_buff_timer", 0) > 0:
                 p["throw_buff_timer"] -= 1
+
+            if p.get("dunk_buff_timer", 0) > 0:
+                p["dunk_buff_timer"] -= 1
 
             if p.get("jump_debuff_timer", 0) > 0:
                 p["jump_debuff_timer"] -= 1
