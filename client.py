@@ -71,6 +71,9 @@ def get_throw_power(player_data):
     if player_data.get("char") == "Rafael":
         power = 35
 
+    if player_data.get("char") == "Caique":
+        power += min(10, float(player_data.get("caique_rage", 0)) * 0.10)
+
     if player_data.get("jackpot_timer", 0) > 0:
         power += 15
     elif player_data.get("throw_buff_timer", 0) > 0:
@@ -125,22 +128,27 @@ def resolve_circle_rect_collision(ball, rect, bounce=0.75):
         ball["vel_y"] -= (1 + bounce) * dot * ny
 
 
-def resolve_hoop_collisions(ball):
-    for rim_x in (LEFT_HOOP_X1, LEFT_HOOP_X2, RIGHT_HOOP_X1, RIGHT_HOOP_X2):
+def resolve_hoop_collisions(ball, world_width=WIDTH):
+    geo = get_court_geometry(world_width)
+
+    for rim_x in (geo["left_hoop_x1"], geo["left_hoop_x2"], geo["right_hoop_x1"], geo["right_hoop_x2"]):
         resolve_circle_point_collision(ball, rim_x, HOOP_Y, HOOP_RIM_RAD)
 
-    resolve_circle_rect_collision(ball, (LEFT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
-    resolve_circle_rect_collision(ball, (RIGHT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+    resolve_circle_rect_collision(ball, (geo["left_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+    resolve_circle_rect_collision(ball, (geo["right_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
 
 
-def get_attack_hoop(team):
+def get_attack_hoop(team, world_width=WIDTH):
+    geo = get_court_geometry(world_width)
+
     if team == 1:
-        return (RIGHT_HOOP_X1 + RIGHT_HOOP_X2) / 2, HOOP_Y
+        return (geo["right_hoop_x1"] + geo["right_hoop_x2"]) / 2, HOOP_Y
 
-    return (LEFT_HOOP_X1 + LEFT_HOOP_X2) / 2, HOOP_Y
+    return (geo["left_hoop_x1"] + geo["left_hoop_x2"]) / 2, HOOP_Y
 
 
 def can_start_dunk_locally(player_data, ball):
+    world_width = int(player_data.get("world_width", ball.get("world_width", WIDTH)))
     if ball.get("holder") is None:
         return False
 
@@ -153,7 +161,7 @@ def can_start_dunk_locally(player_data, ball):
     if player_data["y"] >= GROUND_Y - CHAR_H - 4:
         return False
 
-    hoop_x, hoop_y = get_attack_hoop(player_data["team"])
+    hoop_x, hoop_y = get_attack_hoop(player_data["team"], world_width)
     player_cx = player_data["x"] + CHAR_W / 2
     player_cy = player_data["y"] + CHAR_H / 2
     range_bonus_x = 45 if player_data.get("dunk_buff_timer", 0) > 0 else 0
@@ -181,6 +189,25 @@ def qte_key_from_event(event):
     return None
 
 
+def trainer_copy_character_from_key(key):
+    number_keys = [
+        (pygame.K_1, pygame.K_KP1),
+        (pygame.K_2, pygame.K_KP2),
+        (pygame.K_3, pygame.K_KP3),
+        (pygame.K_4, pygame.K_KP4),
+        (pygame.K_5, pygame.K_KP5),
+        (pygame.K_6, pygame.K_KP6),
+        (pygame.K_7, pygame.K_KP7),
+        (pygame.K_8, pygame.K_KP8),
+    ]
+
+    for i, keys in enumerate(number_keys):
+        if key in keys and i < len(TRAINER_COPY_CHARACTERS):
+            return TRAINER_COPY_CHARACTERS[i]
+
+    return None
+
+
 ABILITY_ACHIEVEMENTS = {
     "Henrique": "henrique_dash",
     "Natan": "natan_ghost",
@@ -191,6 +218,34 @@ ABILITY_ACHIEVEMENTS = {
     "Diogo": "diogo_cookie",
     "Paulo": "paulo_spin",
 }
+
+SECRET_CHARACTER_CODE = [
+    pygame.K_UP,
+    pygame.K_UP,
+    pygame.K_DOWN,
+    pygame.K_DOWN,
+    pygame.K_LEFT,
+    pygame.K_RIGHT,
+    pygame.K_LEFT,
+    pygame.K_RIGHT,
+    pygame.K_b,
+    pygame.K_a,
+    pygame.K_RETURN,
+]
+
+SECRET_SELECTABLE_CHARACTERS = [char for char in SECRET_CHARACTERS if char != "Bola"]
+LOBBY_CHARACTERS = PUBLIC_CHARACTERS
+
+SECRET_CHARACTER_SLOTS = SECRET_SELECTABLE_CHARACTERS
+STORY_COMPLETION_UNLOCK_LEVEL = 12
+
+HAVOC_COMMAND_OPTIONS = [
+    ("deliver", "ENTREGAR BOLA", "Se estiver com a bola, entrega para o Havoc; senao, a bola cai perto do alvo."),
+    ("freeze", "CONGELAR", "Fica parado e perde a bola por alguns segundos."),
+    ("retreat", "RECUAR", "Volta para a defesa com lentidao."),
+]
+
+REACTION_OPTIONS = ["Boa!", "Kkk", "Passa!", "Foi mal", "Fraco", "Nossa!"]
 
 
 def draw_skin_overlay(surface, x, y, w, h, skin_id, scale=1.0):
@@ -354,7 +409,7 @@ def draw_skin_overlay(surface, x, y, w, h, skin_id, scale=1.0):
             pygame.draw.circle(surface, accent, right_shoe.center, max(1, int(3 * scale)))
 
 
-def predict_ball_path(ball, target_x, target_y, power, steps=180):
+def predict_ball_path(ball, target_x, target_y, power, steps=180, world_width=WIDTH):
     angle = math.atan2(target_y - ball["y"], target_x - ball["x"])
     x = ball["x"]
     y = ball["y"] - 10
@@ -376,12 +431,12 @@ def predict_ball_path(ball, target_x, target_y, power, steps=180):
             x = BALL_RAD
             vel_x *= -0.8
 
-        if x >= WIDTH - BALL_RAD:
-            x = WIDTH - BALL_RAD
+        if x >= world_width - BALL_RAD:
+            x = world_width - BALL_RAD
             vel_x *= -0.8
 
         temp_ball = {"x": x, "y": y, "vel_x": vel_x, "vel_y": vel_y}
-        resolve_hoop_collisions(temp_ball)
+        resolve_hoop_collisions(temp_ball, world_width)
         x = temp_ball["x"]
         y = temp_ball["y"]
         vel_x = temp_ball["vel_x"]
@@ -528,6 +583,7 @@ class GameClient:
         self.room_code = ""
         self.error_msg = ""
         self.server_data = None
+        self.current_window_width = WIDTH
 
         self.selected_char_idx = 0
         self.player_x = 0
@@ -560,6 +616,26 @@ class GameClient:
         self.achievements_scroll = 0
         self.achievement_notifications = []
         self.current_achievement_notification = None
+        self.secret_character_select_open = False
+        self.secret_code_buffer = []
+        self.secret_bola_buffer = ""
+        self.admin_code_buffer = ""
+        self.admin_password_open = False
+        self.admin_password = ""
+        self.admin_message = ""
+        self.admin_message_timer = 0
+        self.trainer_ability_selecting = False
+        self.murilo_drawing = False
+        self.murilo_draw_points = []
+        self.murilo_message = ""
+        self.murilo_message_timer = 0
+        self.murilo_pending_confirmation = False
+        self.havoc_selecting_target = False
+        self.havoc_selected_target_id = None
+        self.havoc_command_rects = []
+        self.bola_aiming = False
+        self.reaction_wheel_open = False
+        self.reaction_rects = []
         self.last_seen_clash_id = None
         self.last_dunk_ready_state = 0
         self.seen_jackpot_players = set()
@@ -577,6 +653,8 @@ class GameClient:
         self.room_code_rect = pygame.Rect(WIDTH // 2 - 100, 340, 200, 50)
 
         self.btn_start_game = Button("INICIAR", WIDTH - 220, 20, 200, 60, BALL_COLOR)
+        self.btn_add_bot = Button("+ BOT", WIDTH - 220, 90, 95, 40, (70, 150, 90))
+        self.btn_remove_bot = Button("- BOT", WIDTH - 115, 90, 95, 40, (160, 80, 70))
         self.btn_team_blue = Button("TIME AZUL", 50, 80, 180, 40, TEAM_1_COLOR)
         self.btn_team_red = Button("TIME VERM.", 240, 80, 180, 40, TEAM_2_COLOR)
 
@@ -590,12 +668,13 @@ class GameClient:
         self.btn_shop_equip = Button("EQUIPAR", WIDTH - 270, HEIGHT - 85, 220, 55, TEAM_1_COLOR)
         self.btn_stats_back = Button("VOLTAR", 40, HEIGHT - 75, 180, 55, (180, 40, 40))
         self.btn_achievements_back = Button("VOLTAR", 40, HEIGHT - 75, 180, 55, (180, 40, 40))
+        self.btn_secret_back = Button("VOLTAR", 40, HEIGHT - 75, 180, 55, (180, 40, 40))
 
         self.char_images = {}
         self.small_char_images = {}
         self.tinted_small_images = {}
 
-        self.card_w = 140
+        self.card_w = 125
         self.card_h = 400
 
         for name, info in CHARACTERS_INFO.items():
@@ -710,6 +789,14 @@ class GameClient:
         self.replay_index = 0
         self.replay_tick = 0
         self.last_replay_id = 0
+        self.secret_character_select_open = False
+        self.secret_code_buffer = []
+        self.trainer_ability_selecting = False
+        self.murilo_drawing = False
+        self.murilo_draw_points = []
+        self.murilo_message = ""
+        self.murilo_message_timer = 0
+        self.murilo_pending_confirmation = False
 
         if self.current_goal_sound:
             self.current_goal_sound.stop()
@@ -848,6 +935,11 @@ class GameClient:
     def draw_menu(self):
         screen.fill(COURT_COLOR)
 
+        if self.admin_message_timer > 0:
+            self.admin_message_timer -= 1
+        elif self.admin_message:
+            self.admin_message = ""
+
         title = font_lg.render("NN LEAGUE", True, BLACK)
         screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 70))
 
@@ -898,6 +990,36 @@ class GameClient:
         money_txt = font_md.render(f"Dinheiro: ${save_db.get_money()}", True, BLACK)
         screen.blit(money_txt, (20, 20))
 
+        if self.admin_message:
+            msg = font_sm.render(self.admin_message, True, (20, 120, 20) if "liberado" in self.admin_message.lower() else (180, 30, 30))
+            screen.blit(msg, (WIDTH // 2 - msg.get_width() // 2, 35))
+
+        if self.admin_password_open:
+            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 120))
+            screen.blit(overlay, (0, 0))
+
+            panel = pygame.Rect(WIDTH // 2 - 260, HEIGHT // 2 - 115, 520, 230)
+            pygame.draw.rect(screen, (18, 22, 28), panel, border_radius=18)
+            pygame.draw.rect(screen, (255, 215, 0), panel, 3, border_radius=18)
+
+            title = font_md.render("ACESSO ADMIN", True, (255, 215, 0))
+            screen.blit(title, (panel.centerx - title.get_width() // 2, panel.y + 24))
+
+            hint = font_sm.render("Digite a senha e aperte ENTER. ESC cancela.", True, WHITE)
+            screen.blit(hint, (panel.centerx - hint.get_width() // 2, panel.y + 65))
+
+            input_rect = pygame.Rect(panel.x + 55, panel.y + 108, panel.w - 110, 48)
+            pygame.draw.rect(screen, WHITE, input_rect, border_radius=8)
+            pygame.draw.rect(screen, (255, 215, 0), input_rect, 2, border_radius=8)
+
+            password_text = "*" * len(self.admin_password)
+            pass_txt = font_md.render(password_text, True, BLACK)
+            screen.blit(pass_txt, (input_rect.x + 12, input_rect.y + 8))
+
+            action = font_sm.render("Ao confirmar: libera historia, conquistas e dinheiro.", True, (220, 220, 220))
+            screen.blit(action, (panel.centerx - action.get_width() // 2, panel.y + 178))
+
         if self.error_msg:
             err = font_sm.render(self.error_msg, True, (200, 0, 0))
             screen.blit(err, (WIDTH // 2 - err.get_width() // 2, 585))
@@ -913,8 +1035,35 @@ class GameClient:
         draw_skin_overlay(screen, x, y, w, h, skin_id, w / CHAR_W)
         pygame.draw.rect(screen, WHITE, (x, y, w, h), 2)
 
+    def draw_character_info_panel(self, char_name, title_y=HEIGHT - 112):
+        panel_rect = pygame.Rect(0, HEIGHT - 145, WIDTH, 145)
+        pygame.draw.rect(screen, (20, 20, 25), panel_rect)
+        pygame.draw.rect(screen, (50, 50, 60), panel_rect, 3)
+
+        info = CHARACTERS_INFO[char_name]
+        desc_title = font_title.render(char_name.upper(), True, info["color"])
+        screen.blit(desc_title, (50, title_y))
+
+        desc_lines = self.render_wrapped_text(info["desc"], font_sm, WHITE, WIDTH - 100)
+        y = HEIGHT - 75
+
+        for line in desc_lines[:1]:
+            screen.blit(line, (50, y))
+            y += 23
+
+        ultimate_cost = ULTIMATE_COSTS.get(char_name, ULTIMATE_MAX)
+        ultimate_text = f"Supremo (Q) - Custo {ultimate_cost}: {info.get('ultimate_desc', 'Versao exagerada do poder.')}"
+        ultimate_lines = self.render_wrapped_text(ultimate_text, font_sm, (255, 220, 95), WIDTH - 100)
+
+        for line in ultimate_lines[:2]:
+            screen.blit(line, (50, y))
+            y += 22
+
     def draw_shop(self):
         screen.fill((18, 28, 34))
+
+        if CHARACTERS[self.selected_char_idx] in SECRET_CHARACTERS:
+            self.selected_char_idx = CHARACTERS.index(PUBLIC_CHARACTERS[0])
 
         title = font_lg.render("LOJA DE COSMETICOS", True, (120, 240, 200))
         screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 35))
@@ -936,11 +1085,12 @@ class GameClient:
 
         self.shop_char_rects = []
 
-        for i, name in enumerate(CHARACTERS):
+        for i, name in enumerate(PUBLIC_CHARACTERS):
+            char_idx = CHARACTERS.index(name)
             rect = pygame.Rect(500 + (i % 4) * 155, 95 + (i // 4) * 42, 145, 34)
-            self.shop_char_rects.append((rect, i))
-            pygame.draw.rect(screen, (65, 80, 95) if i == self.selected_char_idx else (35, 45, 55), rect, border_radius=8)
-            pygame.draw.rect(screen, (255, 230, 120) if i == self.selected_char_idx else GRAY, rect, 2, border_radius=8)
+            self.shop_char_rects.append((rect, char_idx))
+            pygame.draw.rect(screen, (65, 80, 95) if char_idx == self.selected_char_idx else (35, 45, 55), rect, border_radius=8)
+            pygame.draw.rect(screen, (255, 230, 120) if char_idx == self.selected_char_idx else GRAY, rect, 2, border_radius=8)
             p = save_db.get_character_progress(name)
             txt = font_sm.render(f"{name} Lv{p['level']}", True, WHITE)
             screen.blit(txt, (rect.x + 8, rect.y + 7))
@@ -1028,7 +1178,7 @@ class GameClient:
 
         y += 28
 
-        for char in CHARACTERS:
+        for char in PUBLIC_CHARACTERS:
             p = save_db.get_character_progress(char)
             values = [
                 char,
@@ -1191,6 +1341,10 @@ class GameClient:
 
         if self.is_host:
             self.btn_start_game.draw(screen)
+            self.btn_add_bot.draw(screen)
+            self.btn_remove_bot.draw(screen)
+            bot_hint = font_sm.render(f"+ BOT usa selecionado: {CHARACTERS[self.selected_char_idx]}", True, (180, 230, 180))
+            screen.blit(bot_hint, (WIDTH - 220, 135))
         else:
             wait_txt = font_md.render("Aguardando o Host...", True, GRAY)
             screen.blit(wait_txt, (WIDTH - wait_txt.get_width() - 20, 30))
@@ -1210,7 +1364,8 @@ class GameClient:
             for pid, p_data in self.server_data["players"].items():
                 p_team_color = TEAM_1_COLOR if p_data["team"] == 1 else TEAM_2_COLOR
                 p_char = p_data["char"] if p_data["char"] else "Escolhendo..."
-                p_text = f"P{pid}: {p_char}"
+                prefix = p_data.get("bot_name", f"P{pid}") if p_data.get("is_bot") else f"P{pid}"
+                p_text = f"{prefix}: {p_char}"
 
                 if pid == self.my_id:
                     p_text += " (Você)"
@@ -1220,17 +1375,18 @@ class GameClient:
                 screen.blit(txt_surf, (50, y_pos + 5))
                 y_pos += 35
 
-        total_width = (self.card_w * len(CHARACTERS)) + (10 * (len(CHARACTERS) - 1))
+        total_width = (self.card_w * len(LOBBY_CHARACTERS)) + (10 * (len(LOBBY_CHARACTERS) - 1))
         start_x = (WIDTH - total_width) // 2
         start_y = 180
 
         self.char_rects = []
         hovered_char = None
 
-        for i, name in enumerate(CHARACTERS):
+        for i, name in enumerate(LOBBY_CHARACTERS):
+            char_idx = CHARACTERS.index(name)
             x = start_x + i * (self.card_w + 10)
             rect = pygame.Rect(x, start_y, self.card_w, self.card_h)
-            self.char_rects.append(rect)
+            self.char_rects.append((rect, char_idx))
 
             is_taken = False
 
@@ -1259,7 +1415,7 @@ class GameClient:
                     (x + self.card_w // 2 - taken_txt.get_width() // 2, start_y + self.card_h // 2)
                 )
 
-            if i == self.selected_char_idx:
+            if char_idx == self.selected_char_idx:
                 pygame.draw.rect(screen, (255, 215, 0), rect, 5)
 
             if rect.collidepoint(mouse_pos):
@@ -1267,16 +1423,298 @@ class GameClient:
                 pygame.draw.rect(screen, WHITE, rect, 2)
 
         char_to_show = hovered_char if hovered_char else CHARACTERS[self.selected_char_idx]
+        self.draw_character_info_panel(char_to_show)
 
-        panel_rect = pygame.Rect(0, HEIGHT - 120, WIDTH, 120)
-        pygame.draw.rect(screen, (20, 20, 25), panel_rect)
-        pygame.draw.rect(screen, (50, 50, 60), panel_rect, 3)
+    def register_secret_character_code_key(self, event):
+        key = pygame.K_RETURN if event.key == pygame.K_KP_ENTER else event.key
 
-        desc_title = font_title.render(char_to_show.upper(), True, CHARACTERS_INFO[char_to_show]["color"])
-        screen.blit(desc_title, (50, HEIGHT - 100))
+        if key not in SECRET_CHARACTER_CODE:
+            self.secret_code_buffer = []
+            return
 
-        desc_text = font_md.render(CHARACTERS_INFO[char_to_show]["desc"], True, WHITE)
-        screen.blit(desc_text, (50, HEIGHT - 50))
+        self.secret_code_buffer.append(key)
+        self.secret_code_buffer = self.secret_code_buffer[-len(SECRET_CHARACTER_CODE):]
+
+        if self.secret_code_buffer == SECRET_CHARACTER_CODE:
+            self.secret_character_select_open = True
+            self.secret_code_buffer = []
+
+    def clear_murilo_drawing(self, message=None):
+        self.murilo_drawing = False
+        self.murilo_draw_points = []
+
+        if message:
+            self.murilo_message = message
+            self.murilo_message_timer = 150
+
+    def add_murilo_draw_point(self, pos):
+        if not self.murilo_draw_points:
+            self.murilo_draw_points.append(pos)
+            return
+
+        last_x, last_y = self.murilo_draw_points[-1]
+
+        if math.hypot(pos[0] - last_x, pos[1] - last_y) >= 6:
+            self.murilo_draw_points.append(pos)
+            self.murilo_draw_points = self.murilo_draw_points[-180:]
+
+    def build_murilo_ability_payload(self):
+        if len(self.murilo_draw_points) < 8:
+            self.clear_murilo_drawing("Desenho muito curto.")
+            return None
+
+        payload_points = [(int(x), int(y)) for x, y in self.murilo_draw_points]
+        self.clear_murilo_drawing("Confirmando desenho...")
+        self.murilo_pending_confirmation = True
+
+        return {
+            "action": "USE_ABILITY",
+            "facing": self.facing,
+            "murilo_points": payload_points,
+        }
+
+    def clear_havoc_selection(self):
+        self.havoc_selecting_target = False
+        self.havoc_selected_target_id = None
+        self.havoc_command_rects = []
+
+    def get_havoc_enemy_at_pos(self, mouse_pos, my_p):
+        if not self.server_data:
+            return None
+
+        for p_id, p_data in self.server_data["players"].items():
+            if p_id == self.my_id:
+                continue
+
+            if p_data.get("team") == my_p.get("team") or p_data.get("char") is None:
+                continue
+
+            rect = pygame.Rect(p_data["x"] - 10, p_data["y"] - 10, CHAR_W + 20, CHAR_H + 20)
+
+            if rect.collidepoint(mouse_pos):
+                return p_id
+
+        return None
+
+    def send_havoc_command_payload(self, command):
+        if self.havoc_selected_target_id is None:
+            return None
+
+        return {
+            "action": "USE_ABILITY",
+            "facing": self.facing,
+            "havoc_target_id": self.havoc_selected_target_id,
+            "havoc_command": command,
+        }
+
+    def draw_havoc_selection(self, my_p_data):
+        if not self.havoc_selecting_target:
+            return
+
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 55))
+        screen.blit(overlay, (0, 0))
+
+        mouse_pos = pygame.mouse.get_pos()
+        hovered_target = self.get_havoc_enemy_at_pos(mouse_pos, my_p_data)
+
+        for p_id, p_data in self.server_data["players"].items():
+            if p_id == self.my_id or p_data.get("team") == my_p_data.get("team") or p_data.get("char") is None:
+                continue
+
+            selected = p_id == self.havoc_selected_target_id
+            hovered = p_id == hovered_target
+            color = (255, 70, 40) if selected else (255, 170, 80) if hovered else (190, 55, 45)
+            rect = pygame.Rect(p_data["x"] - 12, p_data["y"] - 12, CHAR_W + 24, CHAR_H + 24)
+            pygame.draw.rect(screen, color, rect, 3, border_radius=8)
+            pygame.draw.circle(screen, color, (int(p_data["x"] + CHAR_W / 2), int(p_data["y"] + CHAR_H / 2)), 42, 2)
+
+        panel = pygame.Rect(WIDTH // 2 - 390, 96, 780, 150 if self.havoc_selected_target_id is None else 245)
+        pygame.draw.rect(screen, (15, 15, 20), panel, border_radius=18)
+        pygame.draw.rect(screen, (255, 70, 40), panel, 3, border_radius=18)
+
+        title = font_md.render("HAVOC: ORDEM DA QUADRA", True, (255, 90, 55))
+        screen.blit(title, (panel.centerx - title.get_width() // 2, panel.y + 18))
+
+        if self.havoc_selected_target_id is None:
+            hint = font_sm.render("Clique em um inimigo para dominar. ESC cancela.", True, WHITE)
+            screen.blit(hint, (panel.centerx - hint.get_width() // 2, panel.y + 62))
+            self.havoc_command_rects = []
+            return
+
+        target = self.server_data["players"].get(self.havoc_selected_target_id, {})
+        target_name = target.get("char", "Alvo")
+        hint = font_sm.render(f"Alvo: {target_name}. Escolha uma ordem com 1-3, clique, ou ESC.", True, WHITE)
+        screen.blit(hint, (panel.centerx - hint.get_width() // 2, panel.y + 58))
+
+        self.havoc_command_rects = []
+
+        for i, (command, label, desc) in enumerate(HAVOC_COMMAND_OPTIONS):
+            rect = pygame.Rect(panel.x + 32 + i * 244, panel.y + 102, 224, 104)
+            mouse_over = rect.collidepoint(mouse_pos)
+            bg = (55, 28, 24) if mouse_over else (32, 25, 25)
+            pygame.draw.rect(screen, bg, rect, border_radius=14)
+            pygame.draw.rect(screen, (255, 90, 55), rect, 2, border_radius=14)
+
+            label_txt = font_sm.render(f"{i + 1} - {label}", True, (255, 120, 75))
+            screen.blit(label_txt, (rect.x + 14, rect.y + 14))
+
+            words = desc.split()
+            line = ""
+            y = rect.y + 44
+
+            for word in words:
+                candidate = f"{line} {word}".strip()
+
+                if font_sm.size(candidate)[0] > rect.w - 24:
+                    desc_txt = font_sm.render(line, True, WHITE)
+                    screen.blit(desc_txt, (rect.x + 14, y))
+                    y += 22
+                    line = word
+                else:
+                    line = candidate
+
+            if line:
+                desc_txt = font_sm.render(line, True, WHITE)
+                screen.blit(desc_txt, (rect.x + 14, y))
+
+            self.havoc_command_rects.append((rect, command))
+
+    def draw_reaction_wheel(self):
+        if not self.reaction_wheel_open:
+            return
+
+        center_x, center_y = WIDTH // 2, HEIGHT // 2
+        panel = pygame.Rect(center_x - 220, center_y - 120, 440, 240)
+        pygame.draw.rect(screen, (12, 14, 20), panel, border_radius=18)
+        pygame.draw.rect(screen, (255, 215, 90), panel, 3, border_radius=18)
+
+        title = font_md.render("REAÇÕES", True, (255, 215, 90))
+        screen.blit(title, (panel.centerx - title.get_width() // 2, panel.y + 16))
+
+        self.reaction_rects = []
+
+        for i, reaction in enumerate(REACTION_OPTIONS):
+            col = i % 3
+            row = i // 3
+            rect = pygame.Rect(panel.x + 35 + col * 125, panel.y + 72 + row * 62, 110, 44)
+            mouse_over = rect.collidepoint(pygame.mouse.get_pos())
+            pygame.draw.rect(screen, (50, 55, 70) if mouse_over else (30, 34, 48), rect, border_radius=12)
+            pygame.draw.rect(screen, WHITE if mouse_over else (120, 125, 145), rect, 2, border_radius=12)
+            txt = font_sm.render(reaction, True, WHITE)
+            screen.blit(txt, (rect.centerx - txt.get_width() // 2, rect.centery - txt.get_height() // 2))
+            self.reaction_rects.append((rect, reaction))
+
+    def draw_secret_character_select(self):
+        screen.fill((18, 18, 24))
+        mouse_pos = pygame.mouse.get_pos()
+
+        title = font_lg.render("SELECAO SECRETA", True, (255, 215, 0))
+        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 28))
+
+        subtitle = font_sm.render("Codigo desbloqueado. Escolha um personagem secreto. Digite BOLA para virar a bola.", True, WHITE)
+        screen.blit(subtitle, (WIDTH // 2 - subtitle.get_width() // 2, 92))
+
+        total_width = (self.card_w * len(SECRET_CHARACTER_SLOTS)) + (10 * (len(SECRET_CHARACTER_SLOTS) - 1))
+        start_x = (WIDTH - total_width) // 2
+        start_y = 180
+        story_completed = save_db.get_unlocked_story_level() >= STORY_COMPLETION_UNLOCK_LEVEL
+
+        self.secret_char_rects = []
+        hovered_char = None
+
+        for i, slot_name in enumerate(SECRET_CHARACTER_SLOTS):
+            x = start_x + i * (self.card_w + 10)
+            rect = pygame.Rect(x, start_y, self.card_w, self.card_h)
+            is_character_slot = slot_name in CHARACTERS_INFO
+
+            if is_character_slot:
+                char_idx = CHARACTERS.index(slot_name)
+                is_story_locked = slot_name == "Treinador" and not story_completed
+
+                if not is_story_locked:
+                    self.secret_char_rects.append((rect, char_idx))
+
+                is_taken = False
+
+                if self.server_data:
+                    for pid, p_data in self.server_data["players"].items():
+                        if pid != self.my_id and p_data["char"] == slot_name:
+                            is_taken = True
+
+                if self.char_images[slot_name]:
+                    screen.blit(self.char_images[slot_name], (x, start_y))
+                else:
+                    pygame.draw.rect(screen, CHARACTERS_INFO[slot_name]["color"], rect)
+                    name_txt = font_sm.render(slot_name, True, BLACK)
+                    screen.blit(name_txt, (x + 10, start_y + self.card_h // 2))
+
+                if is_taken:
+                    dark_surface = pygame.Surface((self.card_w, self.card_h), pygame.SRCALPHA)
+                    dark_surface.fill((0, 0, 0, 180))
+                    screen.blit(dark_surface, (x, start_y))
+
+                    taken_txt = font_sm.render("EM USO", True, (255, 50, 50))
+                    screen.blit(
+                        taken_txt,
+                        (x + self.card_w // 2 - taken_txt.get_width() // 2, start_y + self.card_h // 2)
+                    )
+
+                if is_story_locked:
+                    dark_surface = pygame.Surface((self.card_w, self.card_h), pygame.SRCALPHA)
+                    dark_surface.fill((0, 0, 0, 195))
+                    screen.blit(dark_surface, (x, start_y))
+
+                    lock_txt = font_sm.render("BLOQUEADO", True, (255, 215, 0))
+                    screen.blit(lock_txt, (x + self.card_w // 2 - lock_txt.get_width() // 2, start_y + self.card_h // 2 - 20))
+
+                    story_txt = font_sm.render("TERMINE A HISTORIA", True, WHITE)
+                    screen.blit(story_txt, (x + self.card_w // 2 - story_txt.get_width() // 2, start_y + self.card_h // 2 + 12))
+
+                if char_idx == self.selected_char_idx:
+                    pygame.draw.rect(screen, (255, 215, 0), rect, 5)
+
+                if rect.collidepoint(mouse_pos):
+                    hovered_char = slot_name
+                    pygame.draw.rect(screen, WHITE, rect, 2)
+            else:
+                pygame.draw.rect(screen, (25, 25, 32), rect)
+                pygame.draw.rect(screen, (255, 215, 0), rect, 2)
+
+                slot_txt = font_lg.render("???", True, (255, 215, 0))
+                screen.blit(slot_txt, (x + self.card_w // 2 - slot_txt.get_width() // 2, start_y + self.card_h // 2 - 45))
+
+                label = font_sm.render("BLOQUEADO", True, GRAY)
+                screen.blit(label, (x + self.card_w // 2 - label.get_width() // 2, start_y + self.card_h // 2 + 20))
+
+        char_to_show = hovered_char
+
+        if not char_to_show and CHARACTERS[self.selected_char_idx] in SECRET_CHARACTERS:
+            char_to_show = CHARACTERS[self.selected_char_idx]
+
+        if char_to_show:
+            if char_to_show == "Treinador" and not story_completed:
+                panel_rect = pygame.Rect(0, HEIGHT - 145, WIDTH, 145)
+                pygame.draw.rect(screen, (20, 20, 25), panel_rect)
+                pygame.draw.rect(screen, (50, 50, 60), panel_rect, 3)
+                desc_title = font_title.render(char_to_show.upper(), True, CHARACTERS_INFO[char_to_show]["color"])
+                screen.blit(desc_title, (50, HEIGHT - 112))
+                desc = "Bloqueado: termine o modo historia para liberar o Treinador."
+                desc_text = font_md.render(desc, True, WHITE)
+                screen.blit(desc_text, (50, HEIGHT - 58))
+            else:
+                self.draw_character_info_panel(char_to_show)
+        else:
+            panel_rect = pygame.Rect(0, HEIGHT - 145, WIDTH, 145)
+            pygame.draw.rect(screen, (20, 20, 25), panel_rect)
+            pygame.draw.rect(screen, (50, 50, 60), panel_rect, 3)
+            desc_title = font_title.render("PERSONAGENS SECRETOS", True, (255, 215, 0))
+            screen.blit(desc_title, (50, HEIGHT - 112))
+
+            desc_text = font_md.render("Passe o mouse em um card para ver a habilidade.", True, WHITE)
+            screen.blit(desc_text, (50, HEIGHT - 58))
+
+        self.btn_secret_back.draw(screen)
 
     def draw_cutscene(self):
         screen.fill(BLACK)
@@ -1320,6 +1758,26 @@ class GameClient:
         if self.reward_message:
             reward_txt = font_md.render(self.reward_message, True, (255, 230, 120))
             screen.blit(reward_txt, (WIDTH // 2 - reward_txt.get_width() // 2, 185))
+
+        awards = self.server_data.get("match_awards", [])
+        highlights = self.server_data.get("match_highlights", [])
+
+        if awards:
+            awards_title = font_md.render("MVP DA PARTIDA", True, (255, 215, 90))
+            screen.blit(awards_title, (70, 225))
+
+            for i, award in enumerate(awards[:5]):
+                y = 260 + i * 30
+                txt = font_sm.render(f"{award['title']}: {award['value']} ({award['detail']})", True, WHITE)
+                screen.blit(txt, (70, y))
+
+        if highlights:
+            high_title = font_md.render("MELHORES MOMENTOS", True, (120, 220, 255))
+            screen.blit(high_title, (WIDTH - 470, 225))
+
+            for i, line in enumerate(highlights[:3]):
+                txt = font_sm.render(line[:58], True, WHITE)
+                screen.blit(txt, (WIDTH - 470, 265 + i * 34))
 
         winners = []
         losers = []
@@ -1390,7 +1848,11 @@ class GameClient:
         save_db.add_character_xp(char_name, xp)
         save_db.record_match(char_name, won, baskets, points)
         self.reward_applied_for_replay_id = replay_id
-        self.reward_message = f"+${money}  +{xp} XP para {char_name}"
+
+        if char_name in SECRET_CHARACTERS:
+            self.reward_message = f"+${money} para {char_name}"
+        else:
+            self.reward_message = f"+${money}  +{xp} XP para {char_name}"
 
         chars_in_match = {p.get("char") for p in self.server_data["players"].values() if p.get("char")}
 
@@ -1596,6 +2058,10 @@ class GameClient:
 
     def draw_player_image(self, p_data, color):
         char_name = p_data.get("char")
+
+        if char_name == "Bola":
+            return
+
         team = p_data.get("team", 1)
         img = self.tinted_small_images.get((char_name, team))
 
@@ -1607,34 +2073,54 @@ class GameClient:
             pygame.draw.rect(screen, color, (p_data["x"], p_data["y"], CHAR_W, CHAR_H))
             draw_skin_overlay(screen, p_data["x"], p_data["y"], CHAR_W, CHAR_H, p_data.get("skin_id", "default"))
 
+    def get_world_width(self):
+        if self.server_data:
+            return int(self.server_data.get("world_width", WIDTH))
+
+        return WIDTH
+
+    def ensure_window_width(self, target_width):
+        global screen
+
+        target_width = int(target_width)
+
+        if target_width == self.current_window_width:
+            return
+
+        screen = pygame.display.set_mode((target_width, HEIGHT))
+        self.current_window_width = target_width
+
     def draw_game(self):
+        world_width = self.get_world_width()
+        geo = get_court_geometry(world_width)
+        self.ensure_window_width(world_width)
         screen.fill((40, 45, 55))
 
-        floor_rect = pygame.Rect(0, HEIGHT - 60, WIDTH, 60)
+        floor_rect = pygame.Rect(0, HEIGHT - 60, world_width, 60)
         pygame.draw.rect(screen, (205, 133, 63), floor_rect)
         pygame.draw.rect(screen, (139, 69, 19), floor_rect, 5)
 
-        pygame.draw.line(screen, WHITE, (WIDTH // 2, HEIGHT - 60), (WIDTH // 2, HEIGHT), 5)
+        pygame.draw.line(screen, WHITE, (world_width // 2, HEIGHT - 60), (world_width // 2, HEIGHT), 5)
 
         pygame.draw.rect(screen, GRAY, (80, HEIGHT - 360, 15, 300))
-        pygame.draw.rect(screen, WHITE, (LEFT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
-        pygame.draw.rect(screen, TEAM_1_COLOR, (LEFT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
-        pygame.draw.rect(screen, (255, 69, 0), (LEFT_HOOP_X1, HOOP_Y, LEFT_HOOP_X2 - LEFT_HOOP_X1, 8))
+        pygame.draw.rect(screen, WHITE, (geo["left_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+        pygame.draw.rect(screen, TEAM_1_COLOR, (geo["left_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
+        pygame.draw.rect(screen, (255, 69, 0), (geo["left_hoop_x1"], HOOP_Y, geo["left_hoop_x2"] - geo["left_hoop_x1"], 8))
 
-        pygame.draw.line(screen, WHITE, (LEFT_HOOP_X1, HOOP_Y + 8), (110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (LEFT_HOOP_X2, HOOP_Y + 8), (130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (geo["left_hoop_x1"], HOOP_Y + 8), (110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (geo["left_hoop_x2"], HOOP_Y + 8), (130, HEIGHT - 290), 2)
         pygame.draw.line(screen, WHITE, (110, HOOP_Y + 8), (130, HEIGHT - 290), 2)
         pygame.draw.line(screen, WHITE, (130, HOOP_Y + 8), (110, HEIGHT - 290), 2)
 
-        pygame.draw.rect(screen, GRAY, (WIDTH - 95, HEIGHT - 360, 15, 300))
-        pygame.draw.rect(screen, WHITE, (RIGHT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
-        pygame.draw.rect(screen, TEAM_2_COLOR, (RIGHT_BACKBOARD_X, BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
-        pygame.draw.rect(screen, (255, 69, 0), (RIGHT_HOOP_X1, HOOP_Y, RIGHT_HOOP_X2 - RIGHT_HOOP_X1, 8))
+        pygame.draw.rect(screen, GRAY, (world_width - 95, HEIGHT - 360, 15, 300))
+        pygame.draw.rect(screen, WHITE, (geo["right_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+        pygame.draw.rect(screen, TEAM_2_COLOR, (geo["right_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
+        pygame.draw.rect(screen, (255, 69, 0), (geo["right_hoop_x1"], HOOP_Y, geo["right_hoop_x2"] - geo["right_hoop_x1"], 8))
 
-        pygame.draw.line(screen, WHITE, (RIGHT_HOOP_X1, HOOP_Y + 8), (WIDTH - 130, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (RIGHT_HOOP_X2, HOOP_Y + 8), (WIDTH - 110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (WIDTH - 130, HOOP_Y + 8), (WIDTH - 110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (WIDTH - 110, HOOP_Y + 8), (WIDTH - 130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (geo["right_hoop_x1"], HOOP_Y + 8), (world_width - 130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (geo["right_hoop_x2"], HOOP_Y + 8), (world_width - 110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (world_width - 130, HOOP_Y + 8), (world_width - 110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (world_width - 110, HOOP_Y + 8), (world_width - 130, HEIGHT - 290), 2)
 
         if not self.server_data:
             loading = font_md.render("Entrando na partida...", True, WHITE)
@@ -1648,16 +2134,25 @@ class GameClient:
         am_i_jackpot = my_p_data.get("jackpot_timer", 0) > 0
         r_state = my_p_data.get("roleta_state", "IDLE")
 
+        if my_p_data.get("char") == "Bola" and self.bola_aiming:
+            ball_state = self.server_data.get("ball", {})
+
+            if ball_state.get("holder") is not None or ball_state.get("bola_throw_timer", 0) > 0:
+                self.bola_aiming = False
+
         score = self.server_data["score"]
         score_text = font_lg.render(f"{score[0]} x {score[1]}", True, WHITE)
 
-        pygame.draw.rect(screen, BLACK, (WIDTH // 2 - 100, 10, 200, 70), border_radius=15)
-        pygame.draw.rect(screen, TEAM_1_COLOR, (WIDTH // 2 - 100, 10, 100, 70), 4, border_radius=15)
-        pygame.draw.rect(screen, TEAM_2_COLOR, (WIDTH // 2, 10, 100, 70), 4, border_radius=15)
-        screen.blit(score_text, (WIDTH // 2 - score_text.get_width() // 2, 15))
+        pygame.draw.rect(screen, BLACK, (world_width // 2 - 100, 10, 200, 70), border_radius=15)
+        pygame.draw.rect(screen, TEAM_1_COLOR, (world_width // 2 - 100, 10, 100, 70), 4, border_radius=15)
+        pygame.draw.rect(screen, TEAM_2_COLOR, (world_width // 2, 10, 100, 70), 4, border_radius=15)
+        screen.blit(score_text, (world_width // 2 - score_text.get_width() // 2, 15))
 
         for p_id, p_data in self.server_data["players"].items():
             if p_data["char"] is None:
+                continue
+
+            if p_data["char"] == "Bola":
                 continue
 
             is_invisible = p_data.get("invisible_timer", 0) > 0
@@ -1711,7 +2206,59 @@ class GameClient:
                 pulse = (math.sin(pygame.time.get_ticks() * 0.01) + 1) * 5
                 pygame.draw.circle(screen, (0, 255, 100), (p_data["x"] + 15, p_data["y"] + 25), 40 + pulse, 5)
 
+            if p_data.get("havoc_timer", 0) > 0:
+                progress = 1 - p_data.get("havoc_timer", 0) / 60
+                radius = int(45 + progress * 230)
+                pulse = (math.sin(pygame.time.get_ticks() * 0.035) + 1) / 2
+                center = (int(p_data["x"] + CHAR_W / 2), int(p_data["y"] + CHAR_H / 2))
+                pygame.draw.circle(screen, (255, 70, 40), center, radius, 4)
+                pygame.draw.circle(screen, (20, 20, 25), center, int(30 + pulse * 12), 3)
+                havoc_txt = font_sm.render("ORDEM HAVOC", True, (255, 90, 50))
+                screen.blit(havoc_txt, (p_data["x"] + 15 - havoc_txt.get_width() // 2, p_data["y"] - 110))
+
+            if p_data.get("havoc_mark_timer", 0) > 0:
+                mark_pulse = (math.sin(pygame.time.get_ticks() * 0.04) + 1) / 2
+                mark_color = (255, int(60 + mark_pulse * 80), 45)
+                mark_center = (int(p_data["x"] + CHAR_W / 2), int(p_data["y"] + CHAR_H / 2))
+                pygame.draw.circle(screen, mark_color, mark_center, int(38 + mark_pulse * 8), 3)
+                mark_txt = font_sm.render("COMANDADO", True, mark_color)
+                screen.blit(mark_txt, (p_data["x"] + 15 - mark_txt.get_width() // 2, p_data["y"] - 108))
+
+            if p_data.get("ultimate_flash_timer", 0) > 0:
+                pulse = (math.sin(pygame.time.get_ticks() * 0.045) + 1) / 2
+                radius = int(42 + pulse * 16)
+                center = (int(p_data["x"] + CHAR_W / 2), int(p_data["y"] + CHAR_H / 2))
+                pygame.draw.circle(screen, (255, 205, 45), center, radius, 5)
+                pygame.draw.circle(screen, (255, 255, 180), center, int(radius * 0.58), 2)
+                ult_txt = font_sm.render("SUPREMO!", True, (255, 230, 80))
+                screen.blit(ult_txt, (p_data["x"] + 15 - ult_txt.get_width() // 2, p_data["y"] - 125))
+
             self.draw_player_image(p_data, color)
+
+            if p_data.get("char") == "Caique":
+                rage = min(100, float(p_data.get("caique_rage", 0)))
+                rage_factor = rage / 100
+
+                if rage > 0:
+                    rage_surface = pygame.Surface((CHAR_W + 10, CHAR_H + 10), pygame.SRCALPHA)
+                    rage_surface.fill((255, 30, 20, int(35 + rage_factor * 115)))
+                    screen.blit(rage_surface, (p_data["x"] - 5, p_data["y"] - 5))
+                    pygame.draw.circle(screen, (255, 60, 35), (p_data["x"] + 15, p_data["y"] + 25), int(24 + rage_factor * 22), 2)
+
+                if rage >= 20:
+                    smoke_count = 1 + int(rage_factor * 5)
+                    ticks = pygame.time.get_ticks()
+
+                    for s in range(smoke_count):
+                        smoke_x = int(p_data["x"] + 15 + math.sin(ticks / 180 + s) * (5 + s * 2))
+                        smoke_y = int(p_data["y"] - 8 - s * 8 - (ticks // 90 + s * 7) % 10)
+                        smoke_radius = max(3, int(4 + rage_factor * 6 - s * 0.4))
+                        pygame.draw.circle(screen, (80, 80, 80), (smoke_x, smoke_y), smoke_radius)
+
+                if p_data.get("caique_shout_timer", 0) > 0:
+                    shout_progress = 1 - p_data.get("caique_shout_timer", 0) / 45
+                    radius = int(45 + shout_progress * 330)
+                    pygame.draw.circle(screen, (255, 70, 35), (int(p_data["x"] + 15), int(p_data["y"] + 25)), radius, 5)
 
             if p_data.get("ear_timer", 0) > 0:
                 pygame.draw.rect(screen, (255, 200, 150), (p_data["x"] - 32, p_data["y"] + 5, 32, CHAR_H - 10))
@@ -1731,6 +2278,7 @@ class GameClient:
                 p_data.get("jump_debuff_timer", 0) > 0
                 or p_data.get("speed_debuff_timer", 0) > 0
                 or p_data.get("throw_debuff_timer", 0) > 0
+                or p_data.get("lag_timer", 0) > 0
             )
 
             if has_buff and p_data.get("jackpot_timer", 0) <= 0:
@@ -1751,6 +2299,32 @@ class GameClient:
             if p_data.get("knockback_timer", 0) > 0:
                 knock_txt = font_sm.render("EMPURRADO!", True, (255, 180, 0))
                 screen.blit(knock_txt, (p_data["x"] + 15 - knock_txt.get_width() // 2, p_data["y"] - 85))
+
+            if p_data.get("lag_timer", 0) > 0:
+                lag_offset = random.randint(-3, 3)
+                lag_txt = font_sm.render("LAG!", True, (255, 80, 220))
+                screen.blit(lag_txt, (p_data["x"] + 15 - lag_txt.get_width() // 2 + lag_offset, p_data["y"] - 105))
+                pygame.draw.rect(screen, (255, 80, 220), (p_data["x"] - 5 + lag_offset, p_data["y"] - 5, CHAR_W + 10, CHAR_H + 10), 1)
+
+            if p_data.get("goon_timer", 0) > 0:
+                goon_txt = font_md.render("Goonado", True, WHITE)
+                goon_shadow = font_md.render("Goonado", True, BLACK)
+                goon_x = p_data["x"] + 15 - goon_txt.get_width() // 2
+                goon_y = p_data["y"] - 128
+                screen.blit(goon_shadow, (goon_x + 2, goon_y + 2))
+                screen.blit(goon_txt, (goon_x, goon_y))
+
+            if p_data.get("reaction_timer", 0) > 0 and p_data.get("reaction_text"):
+                reaction_txt = font_sm.render(p_data["reaction_text"], True, BLACK)
+                bubble = pygame.Rect(
+                    int(p_data["x"] + CHAR_W / 2 - reaction_txt.get_width() / 2 - 10),
+                    int(p_data["y"] - 142),
+                    reaction_txt.get_width() + 20,
+                    30,
+                )
+                pygame.draw.rect(screen, WHITE, bubble, border_radius=10)
+                pygame.draw.rect(screen, BLACK, bubble, 2, border_radius=10)
+                screen.blit(reaction_txt, (bubble.x + 10, bubble.y + 5))
 
             if is_invisible:
                 inv = font_sm.render("INVISÍVEL", True, WHITE)
@@ -1782,6 +2356,41 @@ class GameClient:
                     res_txt = font_sm.render(outcome.replace("_", " "), True, res_color)
                     screen.blit(res_txt, (p_data["x"] + 15 - res_txt.get_width() // 2, p_data["y"] - 60))
 
+        for npc in self.server_data.get("murilo_npcs", []):
+            npc_x = int(npc.get("x", 0))
+            npc_y = int(npc.get("y", 0))
+            npc_team = npc.get("team", 1)
+            npc_color = TEAM_1_COLOR if npc_team == 1 else TEAM_2_COLOR
+
+            pygame.draw.circle(screen, (235, 235, 235), (npc_x + 15, npc_y + 14), 12)
+            pygame.draw.line(screen, npc_color, (npc_x + 15, npc_y + 27), (npc_x + 15, npc_y + 48), 4)
+            pygame.draw.line(screen, npc_color, (npc_x + 15, npc_y + 34), (npc_x - 4, npc_y + 24), 3)
+            pygame.draw.line(screen, npc_color, (npc_x + 15, npc_y + 34), (npc_x + 34, npc_y + 24), 3)
+            pygame.draw.line(screen, npc_color, (npc_x + 15, npc_y + 48), (npc_x + 3, npc_y + 64), 3)
+            pygame.draw.line(screen, npc_color, (npc_x + 15, npc_y + 48), (npc_x + 27, npc_y + 64), 3)
+            pygame.draw.circle(screen, BLACK, (npc_x + 11, npc_y + 12), 2)
+            pygame.draw.circle(screen, BLACK, (npc_x + 19, npc_y + 12), 2)
+            pygame.draw.arc(screen, BLACK, (npc_x + 9, npc_y + 12, 12, 8), 0.2, 2.9, 2)
+
+            npc_txt = font_sm.render(npc.get("name", "Rabisco"), True, WHITE)
+            screen.blit(npc_txt, (npc_x + 15 - npc_txt.get_width() // 2, npc_y - 24))
+
+            npc_seconds = max(0, int(npc.get("timer", 0) / FPS))
+            timer_txt = font_sm.render(f"{npc_seconds}s", True, (255, 230, 120))
+            screen.blit(timer_txt, (npc_x + 15 - timer_txt.get_width() // 2, npc_y - 46))
+
+        for bird in self.server_data.get("igor_birds", []):
+            bird_x = int(bird.get("x", 0))
+            bird_y = int(bird.get("y", 0))
+            wing = int(math.sin(pygame.time.get_ticks() / 90 + bird.get("phase", 0)) * 6)
+
+            pygame.draw.ellipse(screen, (245, 225, 105), (bird_x - 12, bird_y - 8, 24, 16))
+            pygame.draw.circle(screen, (245, 225, 105), (bird_x + 10, bird_y - 4), 8)
+            pygame.draw.polygon(screen, (255, 150, 60), [(bird_x + 18, bird_y - 4), (bird_x + 27, bird_y), (bird_x + 18, bird_y + 4)])
+            pygame.draw.circle(screen, BLACK, (bird_x + 12, bird_y - 6), 2)
+            pygame.draw.polygon(screen, (245, 245, 170), [(bird_x - 2, bird_y - 5), (bird_x - 22, bird_y - 18 - wing), (bird_x - 10, bird_y + 2)])
+            pygame.draw.polygon(screen, (245, 245, 170), [(bird_x - 2, bird_y + 5), (bird_x - 22, bird_y + 18 + wing), (bird_x - 10, bird_y - 2)])
+
         ball = self.server_data["ball"]
 
         pygame.draw.circle(screen, BALL_COLOR, (int(ball["x"]), int(ball["y"])), BALL_RAD)
@@ -1790,11 +2399,8 @@ class GameClient:
         if ball.get("holder") == self.my_id and r_state != "CUTSCENE":
             mx, my = pygame.mouse.get_pos()
 
-            if (
-                my_p_data.get("char") == "Rafael"
-                and my_p_data.get("throw_buff_timer", 0) > 0
-            ):
-                path = predict_ball_path(ball, mx, my, get_throw_power(my_p_data))
+            if my_p_data.get("throw_buff_timer", 0) > 0:
+                path = predict_ball_path(ball, mx, my, get_throw_power(my_p_data), world_width=world_width)
 
                 if len(path) > 1:
                     pygame.draw.lines(screen, (255, 220, 40), False, path, 3)
@@ -1858,6 +2464,124 @@ class GameClient:
             time_txt = font_sm.render(f"Tempo: {timer / FPS:.1f}s", True, WHITE)
             screen.blit(time_txt, (WIDTH // 2 - time_txt.get_width() // 2, 335))
 
+        if self.trainer_ability_selecting and my_p_data.get("char") == "Treinador":
+            panel = pygame.Rect(WIDTH // 2 - 360, HEIGHT // 2 - 150, 720, 300)
+            pygame.draw.rect(screen, (10, 16, 26), panel, border_radius=18)
+            pygame.draw.rect(screen, (80, 170, 220), panel, 3, border_radius=18)
+
+            title = font_md.render("TREINADOR: COPIAR HABILIDADE", True, (120, 220, 255))
+            screen.blit(title, (panel.centerx - title.get_width() // 2, panel.y + 22))
+
+            hint = font_sm.render("Aperte 1-8 para escolher, ou ESC para cancelar.", True, WHITE)
+            screen.blit(hint, (panel.centerx - hint.get_width() // 2, panel.y + 62))
+
+            for i, copied_char in enumerate(TRAINER_COPY_CHARACTERS):
+                col = i % 2
+                row = i // 2
+                x = panel.x + 70 + col * 320
+                y = panel.y + 110 + row * 42
+                color = CHARACTERS_INFO[copied_char]["color"]
+                option = font_sm.render(f"{i + 1} - {copied_char}", True, color)
+                screen.blit(option, (x, y))
+
+        if my_p_data.get("char") == "Havoc":
+            self.draw_havoc_selection(my_p_data)
+
+            if my_p_data.get("ability_cd", self.ability_cooldown) <= 0 and not self.havoc_selecting_target:
+                hint = font_sm.render("Havoc: E abre a ordem. Escolha inimigo e comando.", True, (255, 120, 75))
+                screen.blit(hint, (20, HEIGHT - 82))
+
+        if my_p_data.get("char") == "Bola":
+            if self.bola_aiming and self.server_data.get("ball", {}).get("holder") is None:
+                mx, my = pygame.mouse.get_pos()
+                ball = self.server_data["ball"]
+                pygame.draw.line(screen, WHITE, (int(ball["x"]), int(ball["y"])), (mx, my), 2)
+                pygame.draw.circle(screen, (255, 60, 40), (mx, my), 6)
+                hint = font_sm.render("Bola: clique para se auto arremessar. ESC cancela.", True, (255, 180, 80))
+            else:
+                hint = font_sm.render("Bola: aperte E para mirar o auto arremesso.", True, (255, 180, 80))
+
+            screen.blit(hint, (20, HEIGHT - 82))
+
+        if my_p_data.get("char") == "Murilo":
+            if len(self.murilo_draw_points) > 1:
+                pygame.draw.lines(screen, (120, 255, 150), False, self.murilo_draw_points, 6)
+
+                for point in self.murilo_draw_points[::10]:
+                    pygame.draw.circle(screen, (230, 255, 230), point, 4)
+
+            if my_p_data.get("ability_cd", self.ability_cooldown) <= 0:
+                hint = font_sm.render(
+                    "Murilo: segure BOTAO DIREITO para desenhar. E confirma. C limpa.",
+                    True,
+                    (180, 255, 190)
+                )
+                screen.blit(hint, (20, HEIGHT - 82))
+
+                commands_1 = font_sm.render(
+                    "Desenhos: linha = forca, cima = pulo, baixo = puxar bola, V = dunk, circulo = atordoar.",
+                    True,
+                    (180, 220, 180)
+                )
+                screen.blit(commands_1, (20, HEIGHT - 58))
+
+                commands_2 = font_sm.render(
+                    "Quadrado = invoca NPC, raio = turbo, sorriso = limpa debuffs, rabisco = bagunca inimigos.",
+                    True,
+                    (180, 220, 180)
+                )
+                screen.blit(commands_2, (20, HEIGHT - 34))
+
+            if self.murilo_message_timer > 0:
+                msg = font_sm.render(self.murilo_message, True, (255, 230, 120))
+                screen.blit(msg, (20, HEIGHT - 112))
+
+        if my_p_data.get("char") == "Caique":
+            rage = min(100, float(my_p_data.get("caique_rage", 0)))
+            rage_txt = font_sm.render(f"Raiva: {int(rage)}% | E: gritao com 10%+", True, (255, 120, 90))
+            screen.blit(rage_txt, (20, HEIGHT - 82))
+
+        if my_p_data.get("lag_timer", 0) > 0:
+            glitch = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            glitch.fill((80, 0, 80, 28))
+
+            for _ in range(12):
+                y = random.randint(0, HEIGHT - 8)
+                h = random.randint(2, 10)
+                x_shift = random.randint(-35, 35)
+                color = random.choice([(255, 0, 180, 70), (0, 220, 255, 65), (255, 255, 255, 35)])
+                pygame.draw.rect(glitch, color, (max(0, x_shift), y, WIDTH, h))
+
+            for _ in range(5):
+                y = random.randint(0, HEIGHT - 45)
+                h = random.randint(16, 42)
+                slice_surface = screen.subsurface((0, y, WIDTH, h)).copy()
+                screen.blit(slice_surface, (random.randint(-22, 22), y))
+
+            screen.blit(glitch, (0, 0))
+            lag_warning = font_lg.render("LAG", True, (255, 80, 220))
+            screen.blit(lag_warning, (WIDTH // 2 - lag_warning.get_width() // 2 + random.randint(-8, 8), 95 + random.randint(-5, 5)))
+
+        if my_p_data.get("goon_timer", 0) > 0:
+            stain = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            ticks = pygame.time.get_ticks()
+            center_x = WIDTH // 2 + int(math.sin(ticks / 220) * 18)
+            center_y = HEIGHT // 2 + int(math.cos(ticks / 260) * 12)
+
+            pygame.draw.ellipse(stain, (255, 255, 255, 255), (center_x - 500, center_y - 310, 1000, 620))
+            pygame.draw.ellipse(stain, (255, 255, 255, 255), (center_x - 680, center_y - 220, 520, 390))
+            pygame.draw.ellipse(stain, (255, 255, 255, 255), (center_x + 110, center_y - 200, 500, 380))
+            pygame.draw.circle(stain, (255, 255, 255, 255), (center_x - 285, center_y + 210), 190)
+            pygame.draw.circle(stain, (255, 255, 255, 255), (center_x + 315, center_y + 195), 175)
+            pygame.draw.circle(stain, (255, 255, 255, 255), (center_x, center_y - 270), 205)
+            pygame.draw.ellipse(stain, (255, 255, 255, 255), (center_x - 630, center_y + 90, 1260, 430))
+            pygame.draw.circle(stain, (255, 255, 255, 255), (center_x, center_y + 285), 260)
+
+            clear_hole = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            pygame.draw.circle(clear_hole, (0, 0, 0, 120), (center_x - 35, center_y - 10), 38)
+            stain.blit(clear_hole, (0, 0), special_flags=pygame.BLEND_RGBA_SUB)
+            screen.blit(stain, (0, 0))
+
         server_cd = my_p_data.get("ability_cd", self.ability_cooldown)
 
         if server_cd > 0:
@@ -1867,7 +2591,33 @@ class GameClient:
             cd_txt = font_md.render("Poder: PRONTO (Aperte E)", True, (50, 255, 50))
             screen.blit(cd_txt, (20, HEIGHT - 50))
 
+        ultimate_cost = ULTIMATE_COSTS.get(my_p_data.get("char"), ULTIMATE_MAX)
+        ult_charge = min(ultimate_cost, float(my_p_data.get("ultimate_charge", 0)))
+        ult_x = world_width - 290
+        ult_y = HEIGHT - 52
+        ult_w = 250
+        ult_h = 18
+        pygame.draw.rect(screen, (22, 22, 28), (ult_x, ult_y, ult_w, ult_h), border_radius=8)
+        pygame.draw.rect(
+            screen,
+            (255, 190, 45),
+            (ult_x, ult_y, int(ult_w * (ult_charge / ultimate_cost)), ult_h),
+            border_radius=8
+        )
+        pygame.draw.rect(screen, (255, 235, 135), (ult_x, ult_y, ult_w, ult_h), 2, border_radius=8)
+
+        if ult_charge >= ultimate_cost:
+            ult_label = "SUPREMO PRONTO (Q)"
+            ult_color = (255, 235, 120)
+        else:
+            ult_label = f"Supremo: {int(ult_charge)}/{ultimate_cost}"
+            ult_color = (230, 210, 160)
+
+        ult_txt = font_sm.render(ult_label, True, ult_color)
+        screen.blit(ult_txt, (ult_x + ult_w // 2 - ult_txt.get_width() // 2, ult_y - 23))
+
         self.btn_leave_match.draw(screen)
+        self.draw_reaction_wheel()
 
     def handle_connection(self, response):
         if response and response[0] == "SUCCESS":
@@ -1906,6 +2656,9 @@ class GameClient:
 
         while running:
             clock.tick(FPS)
+            if self.state != "PLAYING":
+                self.ensure_window_width(WIDTH)
+
             mouse_pos = pygame.mouse.get_pos()
             data_to_send = {}
 
@@ -1924,6 +2677,32 @@ class GameClient:
 
                     my_p = self.server_data["players"][self.my_id]
 
+                    if my_p.get("char") != "Havoc" and self.havoc_selecting_target:
+                        self.clear_havoc_selection()
+
+                    if my_p.get("char") != "Bola" and self.bola_aiming:
+                        self.bola_aiming = False
+
+                    if self.reaction_wheel_open:
+                        if event.type == pygame.KEYDOWN and event.key in (pygame.K_ESCAPE, pygame.K_r):
+                            self.reaction_wheel_open = False
+                            continue
+
+                        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                            for rect, reaction in self.reaction_rects:
+                                if rect.collidepoint(mouse_pos):
+                                    data_to_send["action"] = "REACTION"
+                                    data_to_send["reaction"] = reaction
+                                    self.reaction_wheel_open = False
+                                    break
+                            else:
+                                self.reaction_wheel_open = False
+
+                            continue
+
+                        if event.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
+                            continue
+
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         if self.btn_leave_match.is_clicked(mouse_pos):
                             self.leave_match_to_menu()
@@ -1938,10 +2717,137 @@ class GameClient:
                             continue
 
                     if self.replay_playing:
+                        self.trainer_ability_selecting = False
+                        self.clear_havoc_selection()
+                        self.bola_aiming = False
+                        self.clear_murilo_drawing()
                         continue
 
                     if my_p.get("roleta_state") == "CUTSCENE":
+                        self.trainer_ability_selecting = False
+                        self.clear_havoc_selection()
+                        self.bola_aiming = False
+                        self.clear_murilo_drawing()
                         continue
+
+                    if self.bola_aiming and my_p.get("char") == "Bola":
+                        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                            self.bola_aiming = False
+                            continue
+
+                        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                            data_to_send["action"] = "BOLA_THROW"
+                            data_to_send["target_x"] = mouse_pos[0]
+                            data_to_send["target_y"] = mouse_pos[1]
+                            self.bola_aiming = False
+                            self.ability_cooldown = 240
+                            continue
+
+                        if event.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
+                            continue
+
+                    if self.havoc_selecting_target and my_p.get("char") == "Havoc":
+                        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                            self.clear_havoc_selection()
+                            continue
+
+                        if event.type == pygame.KEYDOWN and self.havoc_selected_target_id is not None:
+                            key_to_command = {
+                                pygame.K_1: "deliver",
+                                pygame.K_KP1: "deliver",
+                                pygame.K_2: "freeze",
+                                pygame.K_KP2: "freeze",
+                                pygame.K_3: "retreat",
+                                pygame.K_KP3: "retreat",
+                            }
+                            command = key_to_command.get(event.key)
+
+                            if command:
+                                payload = self.send_havoc_command_payload(command)
+
+                                if payload:
+                                    data_to_send.update(payload)
+                                    self.ability_cooldown = 540
+
+                                self.clear_havoc_selection()
+                                continue
+
+                        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                            if self.havoc_selected_target_id is not None:
+                                for rect, command in self.havoc_command_rects:
+                                    if rect.collidepoint(mouse_pos):
+                                        payload = self.send_havoc_command_payload(command)
+
+                                        if payload:
+                                            data_to_send.update(payload)
+                                            self.ability_cooldown = 540
+
+                                        self.clear_havoc_selection()
+                                        break
+                                else:
+                                    clicked_target = self.get_havoc_enemy_at_pos(mouse_pos, my_p)
+
+                                    if clicked_target is not None:
+                                        self.havoc_selected_target_id = clicked_target
+
+                                continue
+
+                            clicked_target = self.get_havoc_enemy_at_pos(mouse_pos, my_p)
+
+                            if clicked_target is not None:
+                                self.havoc_selected_target_id = clicked_target
+
+                            continue
+
+                        if event.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
+                            continue
+
+                    if my_p.get("char") == "Murilo":
+                        server_cd = my_p.get("ability_cd", self.ability_cooldown)
+                        can_draw = (
+                            server_cd <= 0
+                            and my_p.get("stun_timer", 0) <= 0
+                            and my_p.get("clash_active", 0) <= 0
+                            and my_p.get("dunk_active", 0) <= 0
+                        )
+
+                        if can_draw and event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                            self.murilo_drawing = True
+                            self.add_murilo_draw_point(mouse_pos)
+                            continue
+
+                        if event.type == pygame.MOUSEMOTION and self.murilo_drawing:
+                            self.add_murilo_draw_point(mouse_pos)
+                            continue
+
+                        if event.type == pygame.MOUSEBUTTONUP and event.button == 3 and self.murilo_drawing:
+                            self.add_murilo_draw_point(mouse_pos)
+                            self.murilo_drawing = False
+                            continue
+
+                        if event.type == pygame.KEYDOWN and event.key == pygame.K_c:
+                            self.clear_murilo_drawing("Desenho limpo.")
+                            continue
+
+                    if self.trainer_ability_selecting and event.type == pygame.KEYDOWN:
+                        copied_char = trainer_copy_character_from_key(event.key)
+
+                        if event.key == pygame.K_ESCAPE:
+                            self.trainer_ability_selecting = False
+                            continue
+
+                        if copied_char:
+                            data_to_send["action"] = "USE_ABILITY"
+                            data_to_send["facing"] = self.facing
+                            data_to_send["copied_ability"] = copied_char
+                            self.trainer_ability_selecting = False
+
+                            if copied_char in ["Diogo", "Paulo"]:
+                                self.ability_cooldown = 480
+                            else:
+                                self.ability_cooldown = 360
+
+                            continue
 
                     if event.type == pygame.KEYDOWN and my_p.get("clash_active", 0) > 0:
                         qte_key = qte_key_from_event(event)
@@ -1950,6 +2856,25 @@ class GameClient:
                             data_to_send["action"] = "CLASH_QTE_KEY"
                             data_to_send["key"] = qte_key
                             continue
+
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_q:
+                        ultimate_cost = ULTIMATE_COSTS.get(my_p.get("char"), ULTIMATE_MAX)
+                        if (
+                            float(my_p.get("ultimate_charge", 0)) >= ultimate_cost
+                            and my_p.get("stun_timer", 0) <= 0
+                            and my_p.get("clash_active", 0) <= 0
+                            and my_p.get("dunk_active", 0) <= 0
+                        ):
+                            data_to_send["action"] = "ULTIMATE"
+                            self.trainer_ability_selecting = False
+                            self.clear_havoc_selection()
+                            self.bola_aiming = False
+                            self.clear_murilo_drawing()
+                            continue
+
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
+                        self.reaction_wheel_open = True
+                        continue
 
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         if (
@@ -1984,6 +2909,32 @@ class GameClient:
                         server_cd = my_p.get("ability_cd", self.ability_cooldown)
 
                         if server_cd <= 0 and my_p.get("stun_timer", 0) <= 0 and my_p.get("clash_active", 0) <= 0:
+                            if my_p.get("char") == "Murilo":
+                                payload = self.build_murilo_ability_payload()
+
+                                if payload:
+                                    data_to_send.update(payload)
+
+                                continue
+
+                            if my_p.get("char") == "Treinador":
+                                self.trainer_ability_selecting = True
+                                continue
+
+                            if my_p.get("char") == "Havoc":
+                                self.havoc_selecting_target = True
+                                self.havoc_selected_target_id = None
+                                self.havoc_command_rects = []
+                                continue
+
+                            if my_p.get("char") == "Bola":
+                                ball = self.server_data.get("ball", {})
+
+                                if ball.get("holder") is None and ball.get("bola_throw_timer", 0) <= 0:
+                                    self.bola_aiming = True
+
+                                continue
+
                             data_to_send["action"] = "USE_ABILITY"
                             data_to_send["facing"] = self.facing
                             ability_achievement = ABILITY_ACHIEVEMENTS.get(my_p.get("char"))
@@ -1995,11 +2946,52 @@ class GameClient:
 
                             if CHARACTERS[self.selected_char_idx] in ["Diogo", "Paulo"]:
                                 self.ability_cooldown = 480
+                            elif CHARACTERS[self.selected_char_idx] == "Igor":
+                                self.ability_cooldown = 420
+                            elif CHARACTERS[self.selected_char_idx] == "Laiz":
+                                self.ability_cooldown = 480
+                            elif CHARACTERS[self.selected_char_idx] == "Kauã":
+                                self.ability_cooldown = 480
+                            elif CHARACTERS[self.selected_char_idx] == "Caique":
+                                if float(my_p.get("caique_rage", 0)) >= 10:
+                                    self.ability_cooldown = 360
+                                else:
+                                    self.ability_cooldown = 0
+                            elif CHARACTERS[self.selected_char_idx] == "João Roberto":
+                                self.ability_cooldown = 420
                             else:
                                 self.ability_cooldown = 360
 
                 elif self.state == "MENU":
                     if event.type == pygame.KEYDOWN:
+                        if self.admin_password_open:
+                            if event.key == pygame.K_ESCAPE:
+                                self.admin_password_open = False
+                                self.admin_password = ""
+                                continue
+
+                            if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
+                                if self.admin_password == "Rafael@1":
+                                    save_db.admin_unlock_everything()
+                                    self.admin_message = "Admin liberado: historia, conquistas e dinheiro desbloqueados."
+                                    self.admin_message_timer = 240
+                                else:
+                                    self.admin_message = "Senha admin incorreta."
+                                    self.admin_message_timer = 180
+
+                                self.admin_password_open = False
+                                self.admin_password = ""
+                                continue
+
+                            if event.key == pygame.K_BACKSPACE:
+                                self.admin_password = self.admin_password[:-1]
+                                continue
+
+                            if event.unicode and event.unicode.isprintable() and len(self.admin_password) < 32:
+                                self.admin_password += event.unicode
+
+                            continue
+
                         ctrl_pressed = pygame.key.get_mods() & pygame.KMOD_CTRL
 
                         if ctrl_pressed and event.key == pygame.K_v:
@@ -2048,6 +3040,21 @@ class GameClient:
                             if event.key == pygame.K_TAB:
                                 self.active_input = "host" if self.active_input == "room" else "room"
 
+                        if event.unicode and event.unicode.isalpha():
+                            self.admin_code_buffer = (self.admin_code_buffer + event.unicode.lower())[-5:]
+
+                            if self.admin_code_buffer == "admin":
+                                self.admin_password_open = True
+                                self.admin_password = ""
+                                self.admin_code_buffer = ""
+                                if self.active_input == "room":
+                                    self.room_code = ""
+                                elif self.active_input == "host" and self.host_ip.lower().endswith("admin"):
+                                    self.host_ip = self.host_ip[:-5]
+                                self.error_msg = ""
+                        elif event.key not in (pygame.K_LSHIFT, pygame.K_RSHIFT, pygame.K_TAB):
+                            self.admin_code_buffer = ""
+
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         if self.host_ip_rect.collidepoint(mouse_pos):
                             self.active_input = "host"
@@ -2066,6 +3073,10 @@ class GameClient:
                             start_story_mode_process()
 
                         elif self.btn_shop.is_clicked(mouse_pos):
+                            if CHARACTERS[self.selected_char_idx] in SECRET_CHARACTERS:
+                                self.selected_char_idx = CHARACTERS.index(PUBLIC_CHARACTERS[0])
+                                self.shop_selected_skin = save_db.get_equipped_skin(CHARACTERS[self.selected_char_idx])
+
                             self.state = "SHOP"
 
                         elif self.btn_stats.is_clicked(mouse_pos):
@@ -2122,6 +3133,56 @@ class GameClient:
                             self.state = "MENU"
 
                 elif self.state == "LOBBY":
+                    if self.secret_character_select_open:
+                        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                            self.secret_character_select_open = False
+                            self.secret_bola_buffer = ""
+
+                        elif event.type == pygame.KEYDOWN:
+                            if event.unicode and event.unicode.isalpha():
+                                self.secret_bola_buffer = (self.secret_bola_buffer + event.unicode.lower())[-4:]
+
+                                if self.secret_bola_buffer == "bola":
+                                    is_taken = False
+
+                                    if self.server_data:
+                                        for pid, p_data in self.server_data["players"].items():
+                                            if pid != self.my_id and p_data["char"] == "Bola":
+                                                is_taken = True
+
+                                    if not is_taken:
+                                        self.selected_char_idx = CHARACTERS.index("Bola")
+                                        self.secret_character_select_open = False
+
+                                    self.secret_bola_buffer = ""
+                            else:
+                                self.secret_bola_buffer = ""
+
+                        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                            if self.btn_secret_back.is_clicked(mouse_pos):
+                                self.secret_character_select_open = False
+                                self.secret_bola_buffer = ""
+                            else:
+                                for rect, char_idx in getattr(self, "secret_char_rects", []):
+                                    if rect.collidepoint(mouse_pos):
+                                        char_name = CHARACTERS[char_idx]
+                                        is_taken = False
+
+                                        if self.server_data:
+                                            for pid, p_data in self.server_data["players"].items():
+                                                if pid != self.my_id and p_data["char"] == char_name:
+                                                    is_taken = True
+
+                                        if not is_taken:
+                                            self.selected_char_idx = char_idx
+                                            self.secret_character_select_open = False
+                                        break
+
+                        continue
+
+                    if event.type == pygame.KEYDOWN:
+                        self.register_secret_character_code_key(event)
+
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         if self.btn_leave_lobby.is_clicked(mouse_pos):
                             self.leave_match_to_menu()
@@ -2133,9 +3194,17 @@ class GameClient:
                         elif self.btn_team_red.is_clicked(mouse_pos):
                             self.my_team = 2
 
-                        for i, rect in enumerate(self.char_rects):
+                        elif self.is_host and self.btn_add_bot.is_clicked(mouse_pos):
+                            self.net.send({"action": "ADD_BOT", "bot_char": CHARACTERS[self.selected_char_idx]})
+                            continue
+
+                        elif self.is_host and self.btn_remove_bot.is_clicked(mouse_pos):
+                            self.net.send({"action": "REMOVE_BOT"})
+                            continue
+
+                        for rect, char_idx in self.char_rects:
                             if rect.collidepoint(mouse_pos):
-                                char_name = CHARACTERS[i]
+                                char_name = CHARACTERS[char_idx]
                                 is_taken = False
 
                                 if self.server_data:
@@ -2144,7 +3213,7 @@ class GameClient:
                                             is_taken = True
 
                                 if not is_taken:
-                                    self.selected_char_idx = i
+                                    self.selected_char_idx = char_idx
 
                         if self.is_host and self.btn_start_game.is_clicked(mouse_pos):
                             self.net.send({"action": "START_GAME"})
@@ -2156,6 +3225,15 @@ class GameClient:
 
             if self.state in ["LOBBY", "PLAYING"]:
                 if self.state == "LOBBY":
+                    if (
+                        CHARACTERS[self.selected_char_idx] == "Treinador"
+                        and save_db.get_unlocked_story_level() < STORY_COMPLETION_UNLOCK_LEVEL
+                    ):
+                        for fallback_secret in SECRET_SELECTABLE_CHARACTERS:
+                            if fallback_secret != "Treinador":
+                                self.selected_char_idx = CHARACTERS.index(fallback_secret)
+                                break
+
                     data_to_send["action"] = "UPDATE_LOBBY"
                     data_to_send["char"] = CHARACTERS[self.selected_char_idx]
                     data_to_send["skin_id"] = save_db.get_equipped_skin(CHARACTERS[self.selected_char_idx])
@@ -2180,6 +3258,11 @@ class GameClient:
                                 self.speed = 6
                                 self.jump_power = -16
 
+                            if char_name == "Caique":
+                                rage_factor = min(1.0, float(my_p.get("caique_rage", 0)) / 100)
+                                self.speed += rage_factor * 5
+                                self.jump_power -= rage_factor * 3
+
                             if my_p.get("jackpot_timer", 0) > 0:
                                 self.speed += 5
                                 self.jump_power -= 5
@@ -2202,14 +3285,26 @@ class GameClient:
                             is_knocked = my_p.get("knockback_timer", 0) > 0
                             is_dunking = my_p.get("dunk_active", 0) > 0
                             is_clashing = my_p.get("clash_active", 0) > 0
+                            ball_state = self.server_data.get("ball", {})
+                            is_bola_control_locked = (
+                                char_name == "Bola"
+                                and (
+                                    ball_state.get("holder") is not None
+                                    or ball_state.get("bola_throw_timer", 0) > 0
+                                )
+                            )
 
-                            if is_dashing or is_knocked or is_stunned or is_dunking or is_clashing:
+                            if char_name == "Bola":
+                                self.player_x = my_p["x"]
+                                self.player_y = my_p["y"]
+
+                            if is_dashing or is_knocked or is_stunned or is_dunking or is_clashing or is_bola_control_locked:
                                 self.player_x = my_p["x"]
                                 self.player_y = my_p["y"]
 
                             keys = pygame.key.get_pressed()
 
-                            if not is_stunned and not is_dashing and not is_knocked and not is_dunking and not is_clashing:
+                            if not is_stunned and not is_dashing and not is_knocked and not is_dunking and not is_clashing and not is_bola_control_locked:
                                 if keys[pygame.K_a]:
                                     self.player_x -= self.speed
                                     self.facing = -1
@@ -2218,7 +3313,8 @@ class GameClient:
                                     self.player_x += self.speed
                                     self.facing = 1
 
-                                self.player_x = max(0, min(self.player_x, WIDTH - CHAR_W))
+                                world_width = int(my_p.get("world_width", self.get_world_width()))
+                                self.player_x = max(0, min(self.player_x, world_width - CHAR_W))
 
                                 if (keys[pygame.K_w] or keys[pygame.K_SPACE]) and not self.is_jumping:
                                     self.vel_y = self.jump_power
@@ -2258,6 +3354,17 @@ class GameClient:
                     self.update_local_achievement_events()
                     self.update_jackpot_achievement_events()
 
+                    if self.murilo_pending_confirmation and self.my_id in self.server_data.get("players", {}):
+                        murilo_data = self.server_data["players"][self.my_id]
+
+                        if murilo_data.get("ability_cd", 0) > 0:
+                            self.murilo_message = "Comando reconhecido."
+                        else:
+                            self.murilo_message = "Desenho invalido. Cooldown preservado."
+
+                        self.murilo_message_timer = 150
+                        self.murilo_pending_confirmation = False
+
                 if not self.server_data:
                     self.state = "MENU"
                     self.error_msg = "Desconectado do servidor."
@@ -2269,6 +3376,11 @@ class GameClient:
 
                     elif self.state == "LOBBY" and self.server_data["game_started"]:
                         self.state = "PLAYING"
+                        self.secret_character_select_open = False
+                        self.secret_code_buffer = []
+                        self.trainer_ability_selecting = False
+                        self.clear_murilo_drawing()
+                        self.murilo_pending_confirmation = False
                         self.seen_jackpot_players.clear()
                         self.opponent_jackpot_seen = False
                         self.last_seen_clash_id = None
@@ -2295,6 +3407,9 @@ class GameClient:
 
             self.record_replay_frame()
 
+            if self.murilo_message_timer > 0:
+                self.murilo_message_timer -= 1
+
             if self.state == "MENU":
                 self.draw_menu()
 
@@ -2308,7 +3423,10 @@ class GameClient:
                 self.draw_achievements()
 
             elif self.state == "LOBBY":
-                self.draw_lobby()
+                if self.secret_character_select_open:
+                    self.draw_secret_character_select()
+                else:
+                    self.draw_lobby()
 
             elif self.state == "PLAYING":
                 if self.replay_playing:

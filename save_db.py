@@ -1,11 +1,15 @@
 import os
 import sqlite3
 
-from config import CHARACTERS, COSMETICS
+from config import COSMETICS, PUBLIC_CHARACTERS, SECRET_CHARACTERS
 
 
 APP_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "NN League")
 DB_PATH = os.path.join(APP_DIR, "save.db")
+
+
+def is_secret_character(character):
+    return character in SECRET_CHARACTERS
 
 ACHIEVEMENT_DEFS = {
     "rookie": {
@@ -328,7 +332,7 @@ def init_db():
         conn.execute("INSERT OR IGNORE INTO story_progress (id, unlocked_level) VALUES (1, 1)")
         conn.execute("INSERT OR IGNORE INTO owned_skins (skin_id) VALUES ('default')")
 
-        for char in CHARACTERS:
+        for char in PUBLIC_CHARACTERS:
             conn.execute(
                 "INSERT OR IGNORE INTO character_progress (character, xp, level) VALUES (?, 0, 1)",
                 (char,),
@@ -352,6 +356,51 @@ def get_money():
 def add_money(amount):
     with get_connection() as conn:
         conn.execute("UPDATE player_profile SET money = MAX(0, money + ?) WHERE id = 1", (int(amount),))
+
+
+def admin_unlock_everything(money_amount=999999):
+    with get_connection() as conn:
+        conn.execute("UPDATE player_profile SET money = MAX(money, ?) WHERE id = 1", (int(money_amount),))
+        conn.execute(
+            "INSERT OR REPLACE INTO story_progress (id, unlocked_level) VALUES (1, ?)",
+            (12,),
+        )
+
+        for character in PUBLIC_CHARACTERS:
+            conn.execute(
+                """
+                UPDATE character_progress
+                SET level = MAX(level, 5),
+                    matches = MAX(matches, 10),
+                    wins = MAX(wins, 3),
+                    baskets = MAX(baskets, 10),
+                    points = MAX(points, 40)
+                WHERE character = ?
+                """,
+                (character,),
+            )
+
+            for suffix, data in ACHIEVEMENT_DEFS.items():
+                specific_character = data.get("character")
+                valid_characters = data.get("characters")
+
+                if specific_character and specific_character != character:
+                    continue
+
+                if valid_characters and character not in valid_characters:
+                    continue
+
+                achievement_id = f"{character}:{suffix}"
+                conn.execute(
+                    "INSERT OR IGNORE INTO achievements (achievement_id, character) VALUES (?, ?)",
+                    (achievement_id, character),
+                )
+
+        for achievement_id, data in PAIR_ACHIEVEMENT_DEFS.items():
+            conn.execute(
+                "INSERT OR IGNORE INTO achievements (achievement_id, character) VALUES (?, ?)",
+                (achievement_id, " + ".join(data["characters"])),
+            )
 
 
 def get_character_progress(character):
@@ -384,6 +433,9 @@ def get_character_progress(character):
 
 
 def add_character_xp(character, amount):
+    if is_secret_character(character):
+        return
+
     progress = get_character_progress(character)
     xp = progress["xp"] + int(amount)
     level = progress["level"]
@@ -418,23 +470,32 @@ def record_match(character, won, baskets, points):
             """,
             (wins, losses, int(baskets), int(points)),
         )
-        conn.execute(
-            """
-            UPDATE character_progress
-            SET matches = matches + 1,
-                wins = wins + ?,
-                losses = losses + ?,
-                baskets = baskets + ?,
-                points = points + ?
-            WHERE character = ?
-            """,
-            (wins, losses, int(baskets), int(points), character),
-        )
 
-    check_character_achievements(character)
+        if not is_secret_character(character):
+            conn.execute(
+                """
+                UPDATE character_progress
+                SET matches = matches + 1,
+                    wins = wins + ?,
+                    losses = losses + ?,
+                    baskets = baskets + ?,
+                    points = points + ?
+                WHERE character = ?
+                """,
+                (wins, losses, int(baskets), int(points), character),
+            )
+
+    if not is_secret_character(character):
+        check_character_achievements(character)
 
 
 def unlock_achievement(achievement_id, character):
+    if any(secret in achievement_id.split(":", 1)[0].split("+") for secret in SECRET_CHARACTERS):
+        return
+
+    if is_secret_character(character):
+        return
+
     with get_connection() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO achievements (achievement_id, character) VALUES (?, ?)",
@@ -443,6 +504,9 @@ def unlock_achievement(achievement_id, character):
 
 
 def check_character_achievements(character):
+    if is_secret_character(character):
+        return
+
     progress = get_character_progress(character)
 
     thresholds = [
@@ -496,6 +560,9 @@ def check_character_achievements(character):
 
 
 def unlock_character_achievement(character, suffix):
+    if is_secret_character(character):
+        return
+
     definition = ACHIEVEMENT_DEFS.get(suffix)
 
     if not definition:
@@ -514,6 +581,9 @@ def unlock_character_achievement(character, suffix):
 
 
 def unlock_pair_achievement(char_a, char_b, suffix):
+    if is_secret_character(char_a) or is_secret_character(char_b):
+        return
+
     ordered = sorted([char_a, char_b])
     achievement_id = f"{ordered[0]}+{ordered[1]}:{suffix}"
     unlock_achievement(achievement_id, "+".join(ordered))
@@ -541,14 +611,28 @@ def get_achievements():
             "SELECT achievement_id, character, unlocked_at FROM achievements ORDER BY unlocked_at DESC"
         ).fetchall()
 
-    return [dict(row) for row in rows]
+    achievements = []
+
+    for row in rows:
+        achievement = dict(row)
+        achievement_characters = achievement["achievement_id"].split(":", 1)[0].split("+")
+
+        if achievement["character"] in SECRET_CHARACTERS:
+            continue
+
+        if any(character in SECRET_CHARACTERS for character in achievement_characters):
+            continue
+
+        achievements.append(achievement)
+
+    return achievements
 
 
 def get_all_achievements_status():
     unlocked = {row["achievement_id"]: row for row in get_achievements()}
     result = []
 
-    for character in CHARACTERS:
+    for character in PUBLIC_CHARACTERS:
         for suffix, data in ACHIEVEMENT_DEFS.items():
             specific_character = data.get("character")
             valid_characters = data.get("characters")
@@ -622,6 +706,9 @@ def buy_skin(skin_id):
 
 
 def get_equipped_skin(character):
+    if is_secret_character(character):
+        return "default"
+
     with get_connection() as conn:
         row = conn.execute(
             "SELECT skin_id FROM equipped_skins WHERE character = ?",
@@ -635,6 +722,9 @@ def get_equipped_skin(character):
 
 
 def equip_skin(character, skin_id):
+    if is_secret_character(character):
+        return False, "Personagem secreto nao usa itens da loja."
+
     if skin_id not in COSMETICS:
         return False, "Skin invalida."
 

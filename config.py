@@ -16,7 +16,31 @@ HEIGHT = 720
 FPS = 60
 GRAVITY = 0.8
 
+MAP_WIDTH_NORMAL = WIDTH
+MAP_WIDTH_6_PLAYERS = 1480
+MAP_WIDTH_8_PLAYERS = 1680
+
 MAX_SCORE = 25
+ULTIMATE_MAX = 100
+ULTIMATE_COSTS = {
+    "Henrique": 110,
+    "Natan": 105,
+    "Presscinotti": 125,
+    "Diogo": 135,
+    "Miguel": 120,
+    "Rafael": 130,
+    "John Jonh": 110,
+    "Paulo": 150,
+    "Treinador": 150,
+    "Murilo": 145,
+    "Igor": 155,
+    "Laiz": 165,
+    "Kauã": 170,
+    "Caique": 145,
+    "João Roberto": 150,
+    "Havoc": 185,
+    "Bola": 175,
+}
 
 # Agora essa imagem deve estar dentro da pasta imagens/
 CAGE_IMG = "cage.png"
@@ -58,6 +82,27 @@ BACKBOARD_H = 100
 LEFT_BACKBOARD_X = 75
 RIGHT_BACKBOARD_X = WIDTH - 95
 
+
+def map_width_for_player_count(player_count):
+    if player_count >= 8:
+        return MAP_WIDTH_8_PLAYERS
+
+    if player_count >= 6:
+        return MAP_WIDTH_6_PLAYERS
+
+    return MAP_WIDTH_NORMAL
+
+
+def get_court_geometry(world_width=WIDTH):
+    return {
+        "left_hoop_x1": LEFT_HOOP_X1,
+        "left_hoop_x2": LEFT_HOOP_X2,
+        "right_hoop_x1": world_width - 145,
+        "right_hoop_x2": world_width - 95,
+        "left_backboard_x": LEFT_BACKBOARD_X,
+        "right_backboard_x": world_width - 95,
+    }
+
 DUNK_KEYS = ["W", "A", "S", "D"]
 DUNK_SEQUENCE_LEN = 6
 DUNK_TIMER = 105
@@ -78,47 +123,122 @@ CLASH_RANGE = 70
 CHARACTERS_INFO = {
     "Henrique": {
         "desc": "Rouba a bola do inimigo mais próximo rapidamente.",
+        "ultimate_desc": "Dash insano que atravessa a quadra roubando e derrubando quem estiver perto.",
         "img": "henrique.png",
         "color": (100, 100, 250)
     },
     "Natan": {
         "desc": "Fica invisível para os inimigos por um curto período de tempo.",
+        "ultimate_desc": "Some por muito tempo, rouba a bola do inimigo ou teleporta para a bola solta.",
         "img": "natan.png",
         "color": (150, 150, 150)
     },
     "John Jonh": {
         "desc": "Ativa leveza no ar, fazendo John Jonh cair muito mais devagar.",
+        "ultimate_desc": "Faz o time inteiro flutuar e corta o pulo dos inimigos.",
         "img": "john.png",
         "color": (50, 200, 50)
     },
     "Presscinotti": {
         "desc": "Expande a orelha para proteger e barrar a passagem de inimigos.",
+        "ultimate_desc": "Orelhao gigante por mais tempo, empurrando e atordoando inimigos em area grande.",
         "img": "presscinotti.png",
         "color": (250, 150, 50)
     },
     "Rafael": {
         "desc": "Ativa força máxima e mostra a trajetória exata do arremesso.",
+        "ultimate_desc": "Modo arremesso perfeito: buff longo e chute automatico forte valendo 3 se estiver com a bola.",
         "img": "rafael.png",
         "color": (200, 50, 50)
     },
     "Diogo": {
         "desc": "Concede bolachas amaldiçoadas que dão buffs aleatórios para os aliados.",
+        "ultimate_desc": "Banquete amaldicoado: time recebe varios buffs e inimigos ficam lentos/fracos.",
         "img": "diogo.png",
         "color": (200, 200, 50)
     },
     "Miguel": {
         "desc": "Invoca um clone das sombras que copia todos os seus movimentos.",
+        "ultimate_desc": "Clone supremo dura muito, fortalece arremesso e puxa a bola solta para voce.",
         "img": "miguel.png",
         "color": (100, 50, 150)
     },
     "Paulo": {
         "desc": "Gira uma roleta com chance de Buffs, Debuffs ou JACKPOT ÉPICO.",
+        "ultimate_desc": "Jackpot garantido com caos aleatorio nos inimigos.",
         "img": "paulo.png",
         "color": (255, 215, 0)
+    },
+    "Treinador": {
+        "desc": "Aperte E e depois 1-8 para copiar uma habilidade dos 8 principais.",
+        "ultimate_desc": "Grito tatico: time inteiro recebe quase todos os buffs e cooldowns caem.",
+        "img": "treinador.png",
+        "color": (80, 170, 220)
+    },
+    "Murilo": {
+        "desc": "Desenha sinais com o botao direito e aperta E para confirmar o comando.",
+        "ultimate_desc": "Rabisco Supremo: invoca 3 NPCs desenhados e bagunca inimigos ao redor.",
+        "img": "murilo.png",
+        "color": (120, 210, 120)
+    },
+    "Igor": {
+        "desc": "Invoca calopsitas que perseguem a bola e atrapalham inimigos.",
+        "ultimate_desc": "Enxame Supremo: 10 calopsitas perseguem a jogada e travam inimigos.",
+        "img": "igor.png",
+        "color": (245, 220, 95)
+    },
+    "Laiz": {
+        "desc": "Causa lag proposital no time inimigo por alguns segundos.",
+        "ultimate_desc": "Lag global pesado: inimigos travam, teleportam e ficam bugados por mais tempo.",
+        "img": "laiz.png",
+        "color": (235, 120, 210)
+    },
+    "Kauã": {
+        "desc": "Mancha a tela do time inimigo e marca os alvos como Goonado.",
+        "ultimate_desc": "Cegueira absurda: tela inimiga fica branca por muito tempo com lentidao.",
+        "img": "kaua.png",
+        "color": (245, 245, 245)
+    },
+    "Caique": {
+        "desc": "Todo debuff gera raiva; cegueira do Kaua gera ainda mais.",
+        "ultimate_desc": "Raiva maxima instantanea com gritao brutal em area enorme.",
+        "img": "caique.png",
+        "color": (190, 45, 35)
+    },
+    "João Roberto": {
+        "desc": "Troca de lugar com quem esta mais perto da bola e rouba se estiver com ela.",
+        "ultimate_desc": "Troca caotica: rouba a bola e joga os inimigos perto dela atordoados.",
+        "img": "joao_roberto.png",
+        "color": (70, 210, 230)
+    },
+    "Havoc": {
+        "desc": "Lider da Havoc: seleciona um inimigo e escolhe uma ordem para controlar a jogada.",
+        "ultimate_desc": "Comando total: aplica ordens caoticas em todos os inimigos ao mesmo tempo.",
+        "img": "havoc.png",
+        "color": (25, 25, 35)
+    },
+    "Bola": {
+        "desc": "Voce vira a bola do jogo: anda livre, mas pode ser carregado e arremessado por outros.",
+        "ultimate_desc": "Meteorito: auto-arremesso muito mais forte, valendo 3 e derrubando quem estiver perto.",
+        "img": "bola.png",
+        "color": BALL_COLOR
     }
 }
 
+TRAINER_COPY_CHARACTERS = [
+    "Henrique",
+    "Natan",
+    "John Jonh",
+    "Presscinotti",
+    "Rafael",
+    "Diogo",
+    "Miguel",
+    "Paulo",
+]
+
 CHARACTERS = list(CHARACTERS_INFO.keys())
+SECRET_CHARACTERS = ["Treinador", "Murilo", "Igor", "Laiz", "Kauã", "Caique", "João Roberto", "Havoc", "Bola"]
+PUBLIC_CHARACTERS = [char for char in CHARACTERS if char not in SECRET_CHARACTERS]
 
 COSMETICS = {
     "default": {
