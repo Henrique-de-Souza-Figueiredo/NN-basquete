@@ -1850,13 +1850,15 @@ def award_score(room, scored_team):
 
     reset_all_players_after_score(room)
 
-    if room["score"][0] >= MAX_SCORE:
+    win_points = room.get("win_points", DEFAULT_WIN_POINTS)
+
+    if room["score"][0] >= win_points:
         room["game_started"] = False
         room["game_over"] = True
         room["winner_team"] = 1
         build_match_awards(room)
 
-    elif room["score"][1] >= MAX_SCORE:
+    elif room["score"][1] >= win_points:
         room["game_started"] = False
         room["game_over"] = True
         room["winner_team"] = 2
@@ -2632,6 +2634,16 @@ def handle_client(conn, addr):
         if initial_data[0] == "CREATE":
             room_code = generate_room_code()
 
+            # Host pode escolher os pontos para vencer (initial_data[1]);
+            # valida contra as opcoes e cai no default se invalido/ausente.
+            raw_win = initial_data[1] if len(initial_data) > 1 else None
+            try:
+                chosen = int(raw_win)
+            except (TypeError, ValueError):
+                chosen = DEFAULT_WIN_POINTS
+            if chosen not in WIN_POINTS_OPTIONS:
+                chosen = DEFAULT_WIN_POINTS
+
             rooms[room_code] = {
                 "players": {},
                 "game_started": False,
@@ -2640,6 +2652,8 @@ def handle_client(conn, addr):
                 "host_id": 1,
                 "score": [0, 0],
                 "world_width": WIDTH,
+                # Pontos para vencer: definido pelo host no CREATE (validado acima)
+                "win_points": chosen,
 
                 "replay_id": 0,
                 "replay_timer": 0,

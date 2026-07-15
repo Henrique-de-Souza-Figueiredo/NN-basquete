@@ -652,6 +652,11 @@ class GameClient:
         self.host_ip_rect = pygame.Rect(WIDTH // 2 - 160, 250, 320, 45)
         self.room_code_rect = pygame.Rect(WIDTH // 2 - 100, 340, 200, 50)
 
+        # Seletor de pontos para vencer (host escolhe ao criar a sala)
+        self.win_points_index = WIN_POINTS_OPTIONS.index(DEFAULT_WIN_POINTS) if DEFAULT_WIN_POINTS in WIN_POINTS_OPTIONS else 0
+        self.btn_win_left = pygame.Rect(WIDTH // 2 - 235, 188, 40, 40)
+        self.btn_win_right = pygame.Rect(WIDTH // 2 + 195, 188, 40, 40)
+
         self.btn_start_game = Button("INICIAR", WIDTH - 220, 20, 200, 60, BALL_COLOR)
         self.btn_add_bot = Button("+ BOT", WIDTH - 220, 90, 95, 40, (70, 150, 90))
         self.btn_remove_bot = Button("- BOT", WIDTH - 115, 90, 95, 40, (160, 80, 70))
@@ -748,7 +753,8 @@ class GameClient:
             time.sleep(0.8)
 
         self.net = Network(server_host="127.0.0.1")
-        response = self.net.connect("CREATE")
+        win_points = WIN_POINTS_OPTIONS[self.win_points_index]
+        response = self.net.connect("CREATE", win_points=win_points)
         self.handle_connection(response)
 
     def join_remote_room(self):
@@ -978,6 +984,16 @@ class GameClient:
         screen.blit(hint1, (WIDTH // 2 - hint1.get_width() // 2, 395))
         screen.blit(hint2, (WIDTH // 2 - hint2.get_width() // 2, 615))
         screen.blit(hint3, (WIDTH // 2 - hint3.get_width() // 2, 645))
+
+        # Seletor de pontos para vencer (apenas quem cria a sala)
+        wp = WIN_POINTS_OPTIONS[self.win_points_index]
+        panel_wp = pygame.Rect(WIDTH // 2 - 235, 185, 470, 46)
+        pygame.draw.rect(screen, (18, 22, 28), panel_wp, border_radius=12)
+        pygame.draw.rect(screen, (255, 215, 0), panel_wp, 2, border_radius=12)
+        label = font_sm.render(f"Pontos p/ vencer: {wp}", True, (255, 230, 120))
+        screen.blit(label, (WIDTH // 2 - label.get_width() // 2, 195))
+        pygame.draw.polygon(screen, (255, 215, 0), [(WIDTH // 2 - 225, 208), (WIDTH // 2 - 205, 196), (WIDTH // 2 - 205, 220)])
+        pygame.draw.polygon(screen, (255, 215, 0), [(WIDTH // 2 + 225, 208), (WIDTH // 2 + 205, 196), (WIDTH // 2 + 205, 220)])
 
         self.btn_create.draw(screen)
         self.btn_join.draw(screen)
@@ -1752,401 +1768,28 @@ class GameClient:
         screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, 50))
 
         score = self.server_data["score"]
-        score_surf = font_lg.render(f"Placar Final: {score[0]} x {score[1]}", True, WHITE)
-        screen.blit(score_surf, (WIDTH // 2 - score_surf.get_width() // 2, 130))
+        win_points = int(self.server_data.get("win_points", DEFAULT_WIN_POINTS))
+        score_text = font_xl.render(f"{score[0]} x {score[1]}", True, WHITE)
+
+        # Painel do placar (HUD melhorado)
+        pygame.draw.rect(screen, BLACK, (world_width // 2 - 130, 8, 260, 84), border_radius=18)
+        pygame.draw.rect(screen, TEAM_1_COLOR, (world_width // 2 - 130, 8, 130, 84), 4, border_radius=18)
+        pygame.draw.rect(screen, TEAM_2_COLOR, (world_width // 2, 8, 130, 84), 4, border_radius=18)
+        screen.blit(score_text, (world_width // 2 - score_text.get_width() // 2, 12))
+
+        # Barra de progresso ate os pontos para vencer
+        bar_x = world_width // 2 - 120
+        bar_y = 78
+        bar_w = 240
+        bar_h = 10
+        pygame.draw.rect(screen, (40, 40, 48), (bar_x, bar_y, bar_w, bar_h), border_radius=5)
+        p1 = min(1.0, score[0] / win_points) if win_points else 0
+        p2 = min(1.0, score[1] / win_points) if win_points else 0
+        pygame.draw.rect(screen, TEAM_1_COLOR, (bar_x, bar_y, int(bar_w * p1), bar_h), border_radius=5)
+        pygame.draw.rect(screen, TEAM_2_COLOR, (bar_x + int(bar_w * p2), bar_y, int(bar_w * (1 - p2)), bar_h), border_radius=5)
+        goal_txt = font_sm.render(f"Vitoria em {win_points} pts", True, (220, 220, 220))
+        screen.blit(goal_txt, (world_width // 2 - goal_txt.get_width() // 2, 92))
 
-        if self.reward_message:
-            reward_txt = font_md.render(self.reward_message, True, (255, 230, 120))
-            screen.blit(reward_txt, (WIDTH // 2 - reward_txt.get_width() // 2, 185))
-
-        awards = self.server_data.get("match_awards", [])
-        highlights = self.server_data.get("match_highlights", [])
-
-        if awards:
-            awards_title = font_md.render("MVP DA PARTIDA", True, (255, 215, 90))
-            screen.blit(awards_title, (70, 225))
-
-            for i, award in enumerate(awards[:5]):
-                y = 260 + i * 30
-                txt = font_sm.render(f"{award['title']}: {award['value']} ({award['detail']})", True, WHITE)
-                screen.blit(txt, (70, y))
-
-        if highlights:
-            high_title = font_md.render("MELHORES MOMENTOS", True, (120, 220, 255))
-            screen.blit(high_title, (WIDTH - 470, 225))
-
-            for i, line in enumerate(highlights[:3]):
-                txt = font_sm.render(line[:58], True, WHITE)
-                screen.blit(txt, (WIDTH - 470, 265 + i * 34))
-
-        winners = []
-        losers = []
-
-        for p_data in self.server_data["players"].values():
-            if p_data["char"]:
-                if p_data["team"] == winner_team:
-                    winners.append(p_data)
-                else:
-                    losers.append(p_data)
-
-        start_x_win = WIDTH // 2 - (len(winners) * (self.card_w + 20)) // 2
-        y_win = HEIGHT // 2 - self.card_h // 2 - 20
-
-        for i, p_data in enumerate(winners):
-            char_name = p_data["char"]
-            x = start_x_win + i * (self.card_w + 20)
-            img = self.char_images.get(char_name)
-            char_color = CHARACTERS_INFO[char_name]["color"]
-
-            if img:
-                screen.blit(img, (x, y_win))
-            else:
-                pygame.draw.rect(screen, char_color, (x, y_win, self.card_w, self.card_h))
-                name_fallback = font_sm.render(char_name, True, BLACK)
-                screen.blit(name_fallback, (x + 10, y_win + self.card_h // 2))
-
-            draw_skin_overlay(screen, x, y_win, self.card_w, self.card_h, p_data.get("skin_id", "default"), self.card_w / CHAR_W)
-            pygame.draw.rect(screen, JACKPOT_COLOR, (x - 5, y_win - 5, self.card_w + 10, self.card_h + 10), 5)
-
-            name_txt = font_md.render(char_name, True, winner_color)
-            screen.blit(name_txt, (x + self.card_w // 2 - name_txt.get_width() // 2, y_win + self.card_h + 10))
-
-        self.btn_exit.draw(screen)
-
-    def apply_match_rewards_once(self):
-        if not self.server_data or not self.server_data.get("game_over") or self.my_id not in self.server_data["players"]:
-            return
-
-        replay_id = self.server_data.get("replay_id", 0)
-
-        if self.reward_applied_for_replay_id == replay_id:
-            return
-
-        my_data = self.server_data["players"][self.my_id]
-        char_name = my_data.get("char")
-
-        if not char_name:
-            return
-
-        won = my_data.get("team") == self.server_data.get("winner_team")
-        baskets = int(my_data.get("match_baskets", 0))
-        points = int(my_data.get("match_points", 0))
-
-        money = 20 + baskets * 8 + points * 2
-        xp = 25 + baskets * 12 + points * 4
-
-        if won:
-            money += 60
-            xp += 70
-        else:
-            money = max(10, money // 2)
-            xp = max(12, xp // 2)
-
-        unlocked_before = self.get_unlocked_achievement_ids()
-
-        save_db.add_money(money)
-        save_db.add_character_xp(char_name, xp)
-        save_db.record_match(char_name, won, baskets, points)
-        self.reward_applied_for_replay_id = replay_id
-
-        if char_name in SECRET_CHARACTERS:
-            self.reward_message = f"+${money} para {char_name}"
-        else:
-            self.reward_message = f"+${money}  +{xp} XP para {char_name}"
-
-        chars_in_match = {p.get("char") for p in self.server_data["players"].values() if p.get("char")}
-
-        if {"Rafael", "John Jonh"} <= chars_in_match:
-            save_db.unlock_pair_achievement("Rafael", "John Jonh", "aerial")
-
-        if {"Diogo", "Paulo"} <= chars_in_match:
-            save_db.unlock_pair_achievement("Diogo", "Paulo", "chaos")
-
-        if won and self.opponent_jackpot_seen:
-            save_db.unlock_character_achievement(char_name, "jackpot_stopper")
-
-        self.enqueue_new_achievement_notifications(unlocked_before)
-
-    def update_local_achievement_events(self):
-        if not self.server_data or self.my_id not in self.server_data.get("players", {}):
-            return
-
-        my_data = self.server_data["players"][self.my_id]
-        char_name = my_data.get("char")
-
-        if not char_name:
-            return
-
-        unlocked_before = None
-
-        if my_data.get("dunk_ready_to_score", 0) > 0 and self.last_dunk_ready_state <= 0:
-            unlocked_before = self.get_unlocked_achievement_ids()
-            save_db.unlock_character_achievement(char_name, "dunk_master")
-
-        self.last_dunk_ready_state = my_data.get("dunk_ready_to_score", 0)
-
-        clash_id = my_data.get("clash_id", 0)
-
-        if my_data.get("clash_active", 0) > 0 and clash_id and clash_id != self.last_seen_clash_id:
-            if unlocked_before is None:
-                unlocked_before = self.get_unlocked_achievement_ids()
-
-            self.last_seen_clash_id = clash_id
-            save_db.unlock_character_achievement(char_name, "clash_winner")
-            opponent_id = my_data.get("clash_opponent")
-            opponent = self.server_data["players"].get(opponent_id)
-
-            if opponent and opponent.get("char"):
-                pair = {char_name, opponent["char"]}
-
-                if pair == {"Henrique", "Presscinotti"}:
-                    save_db.unlock_pair_achievement("Henrique", "Presscinotti", "clash")
-
-                if pair == {"Henrique", "Miguel"}:
-                    save_db.unlock_pair_achievement("Henrique", "Miguel", "clash")
-
-        if unlocked_before is not None:
-            self.enqueue_new_achievement_notifications(unlocked_before)
-
-    def update_jackpot_achievement_events(self):
-        if not self.server_data or self.my_id not in self.server_data.get("players", {}):
-            return
-
-        my_data = self.server_data["players"][self.my_id]
-        my_char = my_data.get("char")
-
-        if not my_char:
-            return
-
-        for player_id, player in self.server_data["players"].items():
-            if player.get("char") != "Paulo":
-                continue
-
-            has_jackpot = (
-                player.get("jackpot_timer", 0) > 0
-                or player.get("roleta_result") == "JACKPOT"
-                or player.get("roleta_state") == "CUTSCENE"
-            )
-
-            if not has_jackpot or player_id in self.seen_jackpot_players:
-                continue
-
-            self.seen_jackpot_players.add(player_id)
-            unlocked_before = self.get_unlocked_achievement_ids()
-
-            if player_id == self.my_id:
-                save_db.unlock_character_achievement("Paulo", "paulo_jackpot")
-            else:
-                save_db.unlock_character_achievement(my_char, "jackpot_witness")
-
-                if player.get("team") == my_data.get("team"):
-                    save_db.unlock_character_achievement(my_char, "jackpot_ally")
-                else:
-                    self.opponent_jackpot_seen = True
-
-            self.enqueue_new_achievement_notifications(unlocked_before)
-
-    def get_unlocked_achievement_ids(self):
-        return {item["achievement_id"] for item in save_db.get_achievements()}
-
-    def get_achievement_notification_data(self, achievement_id):
-        if achievement_id in save_db.PAIR_ACHIEVEMENT_DEFS:
-            data = save_db.PAIR_ACHIEVEMENT_DEFS[achievement_id]
-            return {
-                "name": data["name"],
-                "description": data["description"],
-                "character": " + ".join(data["characters"]),
-            }
-
-        if ":" not in achievement_id:
-            return None
-
-        character, suffix = achievement_id.split(":", 1)
-        data = save_db.ACHIEVEMENT_DEFS.get(suffix)
-
-        if not data:
-            return None
-
-        return {
-            "name": data["name"],
-            "description": data["description"],
-            "character": character,
-        }
-
-    def enqueue_new_achievement_notifications(self, unlocked_before):
-        unlocked_after = save_db.get_achievements()
-        new_items = [item for item in unlocked_after if item["achievement_id"] not in unlocked_before]
-
-        for item in reversed(new_items):
-            notification = self.get_achievement_notification_data(item["achievement_id"])
-
-            if notification:
-                notification["timer"] = 240
-                self.achievement_notifications.append(notification)
-
-    def render_wrapped_text(self, text, font, color, max_width):
-        lines = []
-        current = ""
-
-        for word in text.split():
-            candidate = word if not current else f"{current} {word}"
-
-            if font.size(candidate)[0] <= max_width:
-                current = candidate
-            else:
-                if current:
-                    lines.append(current)
-                current = word
-
-        if current:
-            lines.append(current)
-
-        return [font.render(line, True, color) for line in lines]
-
-    def draw_achievement_notifications(self):
-        if not self.current_achievement_notification and self.achievement_notifications:
-            self.current_achievement_notification = self.achievement_notifications.pop(0)
-
-        notification = self.current_achievement_notification
-
-        if not notification:
-            return
-
-        notification["timer"] -= 1
-
-        if notification["timer"] <= 0:
-            self.current_achievement_notification = None
-            return
-
-        timer = notification["timer"]
-        panel_w = 500
-        panel_h = 118
-        target_x = WIDTH - panel_w - 24
-        slide = min(1.0, (240 - timer) / 18)
-
-        if timer < 28:
-            slide = min(slide, timer / 28)
-
-        x = int(WIDTH - (WIDTH - target_x) * slide)
-        y = 92
-        rect = pygame.Rect(x, y, panel_w, panel_h)
-
-        shadow = rect.move(6, 6)
-        pygame.draw.rect(screen, (0, 0, 0), shadow, border_radius=18)
-        pygame.draw.rect(screen, (18, 18, 22), rect, border_radius=18)
-        pygame.draw.rect(screen, (255, 140, 0), rect, 3, border_radius=18)
-
-        pygame.draw.circle(screen, BALL_COLOR, (x + 52, y + 58), 28)
-        pygame.draw.circle(screen, BLACK, (x + 52, y + 58), 28, 3)
-        pygame.draw.arc(screen, BLACK, (x + 32, y + 38, 40, 40), -1.2, 1.2, 3)
-        pygame.draw.line(screen, BLACK, (x + 52, y + 30), (x + 52, y + 86), 3)
-        pygame.draw.line(screen, BLACK, (x + 26, y + 58), (x + 78, y + 58), 3)
-
-        header = font_sm.render("CONQUISTA DESBLOQUEADA", True, (255, 215, 90))
-        title = font_md.render(notification["name"], True, WHITE)
-        character = font_sm.render(notification["character"], True, (255, 180, 90))
-        desc_lines = self.render_wrapped_text(notification["description"], font_sm, (220, 220, 220), panel_w - 125)
-
-        screen.blit(header, (x + 98, y + 14))
-        screen.blit(title, (x + 98, y + 36))
-        screen.blit(character, (x + panel_w - character.get_width() - 18, y + 18))
-
-        desc_y = y + 72
-        for line in desc_lines[:2]:
-            screen.blit(line, (x + 98, desc_y))
-            desc_y += 22
-
-    def draw_player_image(self, p_data, color):
-        char_name = p_data.get("char")
-
-        if char_name == "Bola":
-            return
-
-        team = p_data.get("team", 1)
-        img = self.tinted_small_images.get((char_name, team))
-
-        if img:
-            screen.blit(img, (p_data["x"], p_data["y"]))
-            draw_skin_overlay(screen, p_data["x"], p_data["y"], CHAR_W, CHAR_H, p_data.get("skin_id", "default"))
-            pygame.draw.rect(screen, color, (p_data["x"], p_data["y"], CHAR_W, CHAR_H), 2)
-        else:
-            pygame.draw.rect(screen, color, (p_data["x"], p_data["y"], CHAR_W, CHAR_H))
-            draw_skin_overlay(screen, p_data["x"], p_data["y"], CHAR_W, CHAR_H, p_data.get("skin_id", "default"))
-
-    def get_world_width(self):
-        if self.server_data:
-            return int(self.server_data.get("world_width", WIDTH))
-
-        return WIDTH
-
-    def ensure_window_width(self, target_width):
-        global screen
-
-        target_width = int(target_width)
-
-        if target_width == self.current_window_width:
-            return
-
-        screen = pygame.display.set_mode((target_width, HEIGHT))
-        self.current_window_width = target_width
-
-    def draw_game(self):
-        world_width = self.get_world_width()
-        geo = get_court_geometry(world_width)
-        self.ensure_window_width(world_width)
-        screen.fill((40, 45, 55))
-
-        floor_rect = pygame.Rect(0, HEIGHT - 60, world_width, 60)
-        pygame.draw.rect(screen, (205, 133, 63), floor_rect)
-        pygame.draw.rect(screen, (139, 69, 19), floor_rect, 5)
-
-        pygame.draw.line(screen, WHITE, (world_width // 2, HEIGHT - 60), (world_width // 2, HEIGHT), 5)
-
-        pygame.draw.rect(screen, GRAY, (80, HEIGHT - 360, 15, 300))
-        pygame.draw.rect(screen, WHITE, (geo["left_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
-        pygame.draw.rect(screen, TEAM_1_COLOR, (geo["left_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
-        pygame.draw.rect(screen, (255, 69, 0), (geo["left_hoop_x1"], HOOP_Y, geo["left_hoop_x2"] - geo["left_hoop_x1"], 8))
-
-        pygame.draw.line(screen, WHITE, (geo["left_hoop_x1"], HOOP_Y + 8), (110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (geo["left_hoop_x2"], HOOP_Y + 8), (130, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (110, HOOP_Y + 8), (130, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (130, HOOP_Y + 8), (110, HEIGHT - 290), 2)
-
-        pygame.draw.rect(screen, GRAY, (world_width - 95, HEIGHT - 360, 15, 300))
-        pygame.draw.rect(screen, WHITE, (geo["right_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
-        pygame.draw.rect(screen, TEAM_2_COLOR, (geo["right_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
-        pygame.draw.rect(screen, (255, 69, 0), (geo["right_hoop_x1"], HOOP_Y, geo["right_hoop_x2"] - geo["right_hoop_x1"], 8))
-
-        pygame.draw.line(screen, WHITE, (geo["right_hoop_x1"], HOOP_Y + 8), (world_width - 130, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (geo["right_hoop_x2"], HOOP_Y + 8), (world_width - 110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (world_width - 130, HOOP_Y + 8), (world_width - 110, HEIGHT - 290), 2)
-        pygame.draw.line(screen, WHITE, (world_width - 110, HOOP_Y + 8), (world_width - 130, HEIGHT - 290), 2)
-
-        if not self.server_data:
-            loading = font_md.render("Entrando na partida...", True, WHITE)
-            screen.blit(loading, (WIDTH // 2 - loading.get_width() // 2, HEIGHT // 2))
-            return
-
-        if self.my_id not in self.server_data["players"]:
-            return
-
-        my_p_data = self.server_data["players"][self.my_id]
-        am_i_jackpot = my_p_data.get("jackpot_timer", 0) > 0
-        r_state = my_p_data.get("roleta_state", "IDLE")
-
-        if my_p_data.get("char") == "Bola" and self.bola_aiming:
-            ball_state = self.server_data.get("ball", {})
-
-            if ball_state.get("holder") is not None or ball_state.get("bola_throw_timer", 0) > 0:
-                self.bola_aiming = False
-
-        score = self.server_data["score"]
-        score_text = font_lg.render(f"{score[0]} x {score[1]}", True, WHITE)
-
-        pygame.draw.rect(screen, BLACK, (world_width // 2 - 100, 10, 200, 70), border_radius=15)
-        pygame.draw.rect(screen, TEAM_1_COLOR, (world_width // 2 - 100, 10, 100, 70), 4, border_radius=15)
-        pygame.draw.rect(screen, TEAM_2_COLOR, (world_width // 2, 10, 100, 70), 4, border_radius=15)
-        screen.blit(score_text, (world_width // 2 - score_text.get_width() // 2, 15))
 
         for p_id, p_data in self.server_data["players"].items():
             if p_data["char"] is None:
@@ -2234,6 +1877,12 @@ class GameClient:
                 screen.blit(ult_txt, (p_data["x"] + 15 - ult_txt.get_width() // 2, p_data["y"] - 125))
 
             self.draw_player_image(p_data, color)
+
+            # Indicador de posse da bola
+            if self.server_data.get("ball", {}).get("holder") == p_id:
+                bx = int(p_data["x"] + CHAR_W / 2)
+                by = int(p_data["y"] - 18)
+                pygame.draw.polygon(screen, JACKPOT_COLOR, [(bx, by - 12), (bx - 8, by), (bx + 8, by)])
 
             if p_data.get("char") == "Caique":
                 rage = min(100, float(p_data.get("caique_rage", 0)))
@@ -3065,6 +2714,11 @@ class GameClient:
                         elif self.btn_create.is_clicked(mouse_pos):
                             self.create_local_room()
 
+                        elif self.btn_win_left.collidepoint(mouse_pos):
+                            self.win_points_index = (self.win_points_index - 1) % len(WIN_POINTS_OPTIONS)
+
+                        elif self.btn_win_right.collidepoint(mouse_pos):
+                            self.win_points_index = (self.win_points_index + 1) % len(WIN_POINTS_OPTIONS)
 
                         elif self.btn_join.is_clicked(mouse_pos):
                             self.join_remote_room()

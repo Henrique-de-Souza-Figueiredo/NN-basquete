@@ -21,6 +21,11 @@ MAP_WIDTH_6_PLAYERS = 1480
 MAP_WIDTH_8_PLAYERS = 1680
 
 MAX_SCORE = 25
+# Pontos necessarios para vencer. O host pode escolher ao criar a sala;
+# o servidor usa room["win_points"] e cai neste default se nao informado.
+DEFAULT_WIN_POINTS = MAX_SCORE
+# Opcoes oferecidas ao host no menu de criacao de partida
+WIN_POINTS_OPTIONS = [11, 15, 21, 25, 30, 50]
 ULTIMATE_MAX = 100
 ULTIMATE_COSTS = {
     "Henrique": 110,

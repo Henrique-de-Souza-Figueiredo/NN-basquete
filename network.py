@@ -61,13 +61,14 @@ class Network:
         self.addr = (self.server, self.port)
         save_server_config(self.server, self.port)
 
-    def connect(self, action, room_code=""):
+    def connect(self, action, room_code="", win_points=None):
         try:
             self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.client.connect(self.addr)
 
             if action == "CREATE":
-                initial_data = ("CREATE",)
+                # Host escolhe os pontos para vencer; None -> default do server
+                initial_data = ("CREATE", win_points)
 
             elif action == "JOIN":
                 initial_data = ("JOIN", room_code)
