@@ -28,14 +28,39 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("NN League - Multiplayer")
 clock = pygame.time.Clock()
 
-font_sm = pygame.font.SysFont("Arial", 20)
-font_md = pygame.font.SysFont("Arial", 32)
-font_lg = pygame.font.SysFont("Arial", 64, bold=True)
-font_title = pygame.font.SysFont("Arial", 40, bold=True)
-font_xl = pygame.font.SysFont("Arial", 100, bold=True)
+font_sm = pygame.font.SysFont("Segoe UI", 18)
+font_md = pygame.font.SysFont("Segoe UI", 28)
+font_lg = pygame.font.SysFont("Segoe UI", 56, bold=True)
+font_title = pygame.font.SysFont("Segoe UI", 36, bold=True)
+font_xl = pygame.font.SysFont("Segoe UI", 90, bold=True)
+font_label = pygame.font.SysFont("Segoe UI", 16)
+font_button = pygame.font.SysFont("Segoe UI", 22, bold=True)
 
 IMAGES_DIR = "imagens"
 AUDIOS_DIR = "audios"
+
+
+def draw_gradient_bg(surface, color_top, color_bottom):
+    """Desenha um gradiente vertical na superfície."""
+    for y in range(surface.get_height()):
+        ratio = y / surface.get_height()
+        r = int(color_top[0] + (color_bottom[0] - color_top[0]) * ratio)
+        g = int(color_top[1] + (color_bottom[1] - color_top[1]) * ratio)
+        b = int(color_top[2] + (color_bottom[2] - color_top[2]) * ratio)
+        pygame.draw.line(surface, (r, g, b), (0, y), (surface.get_width(), y))
+
+
+def draw_rounded_panel(surface, rect, bg_color, border_color, border_radius=12, border_width=2):
+    """Desenha um painel arredondado com fundo e borda."""
+    pygame.draw.rect(surface, bg_color, rect, border_radius=border_radius)
+    pygame.draw.rect(surface, border_color, rect, border_width, border_radius=border_radius)
+
+
+def draw_text_centered(surface, text, font, color, x, y):
+    """Desenha texto centralizado na posição (x, y)."""
+    txt_surf = font.render(text, True, color)
+    surface.blit(txt_surf, (x - txt_surf.get_width() // 2, y))
+    return txt_surf.get_height()
 
 
 def get_image_path(filename):
@@ -960,36 +985,49 @@ class GameClient:
             self.replay_index += 1
 
     def draw_menu(self):
-        screen.fill(COURT_COLOR)
+        draw_gradient_bg(screen, BG_DARK, (20, 25, 40))
 
         if self.admin_message_timer > 0:
             self.admin_message_timer -= 1
         elif self.admin_message:
             self.admin_message = ""
 
-        title = font_lg.render("NN LEAGUE", True, BLACK)
-        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 70))
+        # Título com efeito de brilho
+        title = font_xl.render("NN LEAGUE", True, ACCENT_GOLD)
+        title_shadow = font_xl.render("NN LEAGUE", True, (180, 150, 30))
+        screen.blit(title_shadow, (WIDTH // 2 - title.get_width() // 2 + 2, 52))
+        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 50))
 
-        ip_label = font_sm.render("IP Radmin do host:", True, BLACK)
-        screen.blit(ip_label, (self.host_ip_rect.x, self.host_ip_rect.y - 25))
+        # Linha decorativa sob o título
+        line_y = 120
+        pygame.draw.line(screen, ACCENT_BLUE, (WIDTH // 2 - 200, line_y), (WIDTH // 2 + 200, line_y), 2)
+        pygame.draw.circle(screen, ACCENT_GOLD, (WIDTH // 2 - 200, line_y), 4)
+        pygame.draw.circle(screen, ACCENT_GOLD, (WIDTH // 2 + 200, line_y), 4)
 
-        pygame.draw.rect(screen, WHITE, self.host_ip_rect, border_radius=8)
+        # Painel de conexão
+        panel_rect = pygame.Rect(WIDTH // 2 - 250, 140, 500, 240)
+        draw_rounded_panel(screen, panel_rect, BG_CARD, BORDER_SUBTLE, 16)
 
-        border_color = (255, 215, 0) if self.active_input == "host" else BLACK
-        pygame.draw.rect(screen, border_color, self.host_ip_rect, 3, border_radius=8)
+        # Campo IP
+        ip_label = font_label.render("IP RADMIN DO HOST", True, TEXT_SECONDARY)
+        screen.blit(ip_label, (self.host_ip_rect.x, self.host_ip_rect.y - 22))
 
-        ip_text = font_md.render(self.host_ip, True, BLACK)
+        pygame.draw.rect(screen, BG_MEDIUM, self.host_ip_rect, border_radius=8)
+        border_color = ACCENT_GOLD if self.active_input == "host" else BORDER_SUBTLE
+        pygame.draw.rect(screen, border_color, self.host_ip_rect, 2, border_radius=8)
+
+        ip_text = font_md.render(self.host_ip, True, TEXT_PRIMARY)
         screen.blit(ip_text, (self.host_ip_rect.x + 10, self.host_ip_rect.y + 6))
 
-        code_label = font_sm.render("Código da sala:", True, BLACK)
-        screen.blit(code_label, (self.room_code_rect.x, self.room_code_rect.y - 25))
+        # Campo Código
+        code_label = font_label.render("CÓDIGO DA SALA", True, TEXT_SECONDARY)
+        screen.blit(code_label, (self.room_code_rect.x, self.room_code_rect.y - 22))
 
-        pygame.draw.rect(screen, WHITE, self.room_code_rect, border_radius=8)
+        pygame.draw.rect(screen, BG_MEDIUM, self.room_code_rect, border_radius=8)
+        border_color = ACCENT_GOLD if self.active_input == "room" else BORDER_SUBTLE
+        pygame.draw.rect(screen, border_color, self.room_code_rect, 2, border_radius=8)
 
-        border_color = (255, 215, 0) if self.active_input == "room" else BLACK
-        pygame.draw.rect(screen, border_color, self.room_code_rect, 3, border_radius=8)
-
-        code_text = font_md.render(self.room_code, True, BLACK)
+        code_text = font_md.render(self.room_code, True, ACCENT_GOLD)
         screen.blit(
             code_text,
             (
@@ -998,13 +1036,23 @@ class GameClient:
             )
         )
 
-        hint1 = font_sm.render("Criar sala: inicia servidor neste PC automaticamente.", True, BLACK)
-        hint2 = font_sm.render("Entrar: use o IP Radmin do host + código da sala.", True, BLACK)
-        hint3 = font_sm.render("Dica: Ctrl+V cola o IP ou código no campo selecionado.", True, BLACK)
+        # Seletor de pontos para vencer
+        wp = WIN_POINTS_OPTIONS[self.win_points_index]
+        panel_wp = pygame.Rect(WIDTH // 2 - 235, 155, 470, 42)
+        draw_rounded_panel(screen, panel_wp, BG_CARD, ACCENT_GOLD, 10, 2)
+        label = font_label.render(f"PONTOS PARA VENCER", True, TEXT_SECONDARY)
+        screen.blit(label, (WIDTH // 2 - label.get_width() // 2, 160))
+        wp_text = font_md.render(str(wp), True, ACCENT_GOLD)
+        screen.blit(wp_text, (WIDTH // 2 - wp_text.get_width() // 2, 178))
 
-        screen.blit(hint1, (WIDTH // 2 - hint1.get_width() // 2, 395))
-        screen.blit(hint2, (WIDTH // 2 - hint2.get_width() // 2, 615))
-        screen.blit(hint3, (WIDTH // 2 - hint3.get_width() // 2, 645))
+        # Botões com efeito hover
+        self.btn_create.draw(screen)
+        self.btn_join.draw(screen)
+        self.btn_story.draw(screen)
+        self.btn_shop.draw(screen)
+        self.btn_stats.draw(screen)
+        self.btn_achievements.draw(screen)
+        self.btn_quit_game.draw(screen)
 
         # Seletor de pontos para vencer (apenas quem cria a sala)
         wp = WIN_POINTS_OPTIONS[self.win_points_index]
@@ -1097,16 +1145,23 @@ class GameClient:
             y += 22
 
     def draw_shop(self):
-        screen.fill((18, 28, 34))
+        draw_gradient_bg(screen, BG_DARK, (15, 22, 32))
 
         if CHARACTERS[self.selected_char_idx] in SECRET_CHARACTERS:
             self.selected_char_idx = CHARACTERS.index(PUBLIC_CHARACTERS[0])
 
-        title = font_lg.render("LOJA DE COSMETICOS", True, (120, 240, 200))
-        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 35))
+        # Cabeçalho da loja
+        header_rect = pygame.Rect(0, 0, WIDTH, 80)
+        pygame.draw.rect(screen, (18, 22, 32), header_rect)
+        pygame.draw.line(screen, ACCENT_CYAN, (0, 80), (WIDTH, 80), 2)
+        
+        title = font_title.render("LOJA DE COSMÉTICOS", True, ACCENT_CYAN)
+        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 15))
 
-        money_txt = font_md.render(f"Dinheiro: ${save_db.get_money()}", True, (255, 230, 120))
-        screen.blit(money_txt, (40, 95))
+        money_panel = pygame.Rect(WIDTH - 250, 20, 220, 40)
+        draw_rounded_panel(screen, money_panel, BG_CARD, ACCENT_GOLD, 8)
+        money_txt = font_md.render(f"${save_db.get_money()}", True, ACCENT_GOLD)
+        screen.blit(money_txt, (WIDTH - 230, 28))
 
         char_name = CHARACTERS[self.selected_char_idx]
         progress = save_db.get_character_progress(char_name)
@@ -1183,10 +1238,14 @@ class GameClient:
             screen.blit(msg, (WIDTH // 2 - msg.get_width() // 2, HEIGHT - 45))
 
     def draw_stats(self):
-        screen.fill((22, 24, 34))
+        draw_gradient_bg(screen, BG_DARK, (18, 22, 35))
 
-        title = font_lg.render("ESTATISTICAS", True, (150, 190, 255))
-        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 30))
+        # Cabeçalho
+        header_rect = pygame.Rect(0, 0, WIDTH, 70)
+        pygame.draw.rect(screen, (18, 22, 32), header_rect)
+        pygame.draw.line(screen, ACCENT_PURPLE, (0, 70), (WIDTH, 70), 2)
+        title = font_title.render("ESTATÍSTICAS", True, ACCENT_PURPLE)
+        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 18))
 
         stats = save_db.get_global_stats()
         story_level = save_db.get_unlocked_story_level()
@@ -1307,11 +1366,15 @@ class GameClient:
             screen.blit(lock, (center[0] - lock.get_width() // 2, center[1] - lock.get_height() // 2))
 
     def draw_achievements(self):
-        screen.fill((24, 20, 30))
+        draw_gradient_bg(screen, BG_DARK, (20, 18, 28))
         mouse_pos = pygame.mouse.get_pos()
 
-        title = font_lg.render("ACHIEVMENTS", True, (255, 215, 90))
-        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 30))
+        # Cabeçalho
+        header_rect = pygame.Rect(0, 0, WIDTH, 70)
+        pygame.draw.rect(screen, (18, 20, 30), header_rect)
+        pygame.draw.line(screen, ACCENT_GOLD, (0, 70), (WIDTH, 70), 2)
+        title = font_title.render("CONQUISTAS", True, ACCENT_GOLD)
+        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 18))
 
         all_achievements = save_db.get_all_achievements_status()
         unlocked_count = sum(1 for item in all_achievements if item["unlocked"])
@@ -1370,11 +1433,15 @@ class GameClient:
         self.btn_achievements_back.draw(screen)
 
     def draw_lobby(self):
-        screen.fill((30, 30, 40))
+        draw_gradient_bg(screen, BG_DARK, (25, 30, 45))
         mouse_pos = pygame.mouse.get_pos()
 
-        room_txt = font_title.render(f"SALA: {self.room_code}", True, WHITE)
-        screen.blit(room_txt, (20, 20))
+        # Título da sala
+        room_panel = pygame.Rect(0, 0, WIDTH, 70)
+        pygame.draw.rect(screen, (20, 25, 35), room_panel)
+        pygame.draw.line(screen, BORDER_SUBTLE, (0, 70), (WIDTH, 70), 1)
+        room_txt = font_title.render(f"SALA: {self.room_code}", True, ACCENT_BLUE)
+        screen.blit(room_txt, (30, 18))
 
         if self.is_host:
             self.btn_start_game.draw(screen)
@@ -1789,6 +1856,375 @@ class GameClient:
         screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, 50))
 
         score = self.server_data["score"]
+        score_surf = font_lg.render(f"Placar Final: {score[0]} x {score[1]}", True, WHITE)
+        screen.blit(score_surf, (WIDTH // 2 - score_surf.get_width() // 2, 130))
+
+        if self.reward_message:
+            reward_txt = font_md.render(self.reward_message, True, (255, 230, 120))
+            screen.blit(reward_txt, (WIDTH // 2 - reward_txt.get_width() // 2, 185))
+
+        awards = self.server_data.get("match_awards", [])
+        highlights = self.server_data.get("match_highlights", [])
+
+        if awards:
+            awards_title = font_md.render("MVP DA PARTIDA", True, (255, 215, 90))
+            screen.blit(awards_title, (70, 225))
+
+            for i, award in enumerate(awards[:5]):
+                y = 260 + i * 30
+                txt = font_sm.render(f"{award['title']}: {award['value']} ({award['detail']})", True, WHITE)
+                screen.blit(txt, (70, y))
+
+        if highlights:
+            high_title = font_md.render("MELHORES MOMENTOS", True, (120, 220, 255))
+            screen.blit(high_title, (WIDTH - 470, 225))
+            for i, line in enumerate(highlights[:3]):
+                txt = font_sm.render(line[:58], True, WHITE)
+                screen.blit(txt, (WIDTH - 470, 265 + i * 34))
+
+        winners = []
+        losers = []
+
+        for p_data in self.server_data["players"].values():
+            if p_data["char"]:
+                if p_data["team"] == winner_team:
+                    winners.append(p_data)
+                else:
+                    losers.append(p_data)
+
+        start_x_win = WIDTH // 2 - (len(winners) * (self.card_w + 20)) // 2
+        y_win = HEIGHT // 2 - self.card_h // 2 - 20
+
+        for i, p_data in enumerate(winners):
+            char_name = p_data["char"]
+            x = start_x_win + i * (self.card_w + 20)
+            img = self.char_images.get(char_name)
+            char_color = CHARACTERS_INFO[char_name]["color"]
+
+            if img:
+                screen.blit(img, (x, y_win))
+            else:
+                pygame.draw.rect(screen, char_color, (x, y_win, self.card_w, self.card_h))
+                name_fallback = font_sm.render(char_name, True, BLACK)
+                screen.blit(name_fallback, (x + 10, y_win + self.card_h // 2))
+
+            draw_skin_overlay(screen, x, y_win, self.card_w, self.card_h, p_data.get("skin_id", "default"), self.card_w / CHAR_W)
+            pygame.draw.rect(screen, JACKPOT_COLOR, (x - 5, y_win - 5, self.card_w + 10, self.card_h + 10), 5)
+
+            name_txt = font_md.render(char_name, True, winner_color)
+            screen.blit(name_txt, (x + self.card_w // 2 - name_txt.get_width() // 2, y_win + self.card_h + 10))
+
+        self.btn_exit.draw(screen)
+
+    def apply_match_rewards_once(self):
+        if not self.server_data or not self.server_data.get("game_over") or self.my_id not in self.server_data["players"]:
+            return
+
+        replay_id = self.server_data.get("replay_id", 0)
+
+        if self.reward_applied_for_replay_id == replay_id:
+            return
+
+        my_data = self.server_data["players"][self.my_id]
+        char_name = my_data.get("char")
+
+        if not char_name:
+            return
+        won = my_data.get("team") == self.server_data.get("winner_team")
+        baskets = int(my_data.get("match_baskets", 0))
+        points = int(my_data.get("match_points", 0))
+
+        money = 20 + baskets * 8 + points * 2
+        xp = 25 + baskets * 12 + points * 4
+
+        if won:
+            money += 60
+            xp += 70
+        else:
+            money = max(10, money // 2)
+            xp = max(12, xp // 2)
+
+        unlocked_before = self.get_unlocked_achievement_ids()
+
+        save_db.add_money(money)
+        save_db.add_character_xp(char_name, xp)
+        save_db.record_match(char_name, won, baskets, points)
+        self.reward_applied_for_replay_id = replay_id
+
+    def update_local_achievement_events(self):
+        if not self.server_data or self.my_id not in self.server_data.get("players", {}):
+            return
+
+        my_data = self.server_data["players"][self.my_id]
+        char_name = my_data.get("char")
+
+        if not char_name:
+            return
+
+        unlocked_before = None
+
+        if my_data.get("dunk_ready_to_score", 0) > 0 and self.last_dunk_ready_state <= 0:
+            unlocked_before = self.get_unlocked_achievement_ids()
+            save_db.unlock_character_achievement(char_name, "dunk_master")
+
+        self.last_dunk_ready_state = my_data.get("dunk_ready_to_score", 0)
+
+        clash_id = my_data.get("clash_id", 0)
+
+        if my_data.get("clash_active", 0) > 0 and clash_id and clash_id != self.last_seen_clash_id:
+            if unlocked_before is None:
+                unlocked_before = self.get_unlocked_achievement_ids()
+
+            self.last_seen_clash_id = clash_id
+            save_db.unlock_character_achievement(char_name, "clash_winner")
+            opponent_id = my_data.get("clash_opponent")
+            opponent = self.server_data["players"].get(opponent_id)
+
+            if opponent and opponent.get("char"):
+                pair = {char_name, opponent["char"]}
+
+                if pair == {"Henrique", "Presscinotti"}:
+                    save_db.unlock_pair_achievement("Henrique", "Presscinotti", "clash")
+
+                if pair == {"Henrique", "Miguel"}:
+                    save_db.unlock_pair_achievement("Henrique", "Miguel", "clash")
+
+        if unlocked_before is not None:
+            self.enqueue_new_achievement_notifications(unlocked_before)
+
+    def update_jackpot_achievement_events(self):
+        if not self.server_data or self.my_id not in self.server_data.get("players", {}):
+            return
+
+        my_data = self.server_data["players"][self.my_id]
+        my_char = my_data.get("char")
+
+        if not my_char:
+            return
+
+        for player_id, player in self.server_data["players"].items():
+            if player.get("char") != "Paulo":
+                continue
+
+            has_jackpot = (
+                player.get("jackpot_timer", 0) > 0
+                or player.get("roleta_result") == "JACKPOT"
+                or player.get("roleta_state") == "CUTSCENE"
+            )
+
+            if not has_jackpot or player_id in self.seen_jackpot_players:
+                continue
+
+            self.seen_jackpot_players.add(player_id)
+            unlocked_before = self.get_unlocked_achievement_ids()
+
+            if player_id == self.my_id:
+                save_db.unlock_character_achievement("Paulo", "paulo_jackpot")
+            else:
+                save_db.unlock_character_achievement(my_char, "jackpot_witness")
+
+                if player.get("team") == my_data.get("team"):
+                    save_db.unlock_character_achievement(my_char, "jackpot_ally")
+                else:
+                    self.opponent_jackpot_seen = True
+
+            self.enqueue_new_achievement_notifications(unlocked_before)
+
+    def get_unlocked_achievement_ids(self):
+        return {item["achievement_id"] for item in save_db.get_achievements()}
+
+    def get_achievement_notification_data(self, achievement_id):
+        if achievement_id in save_db.PAIR_ACHIEVEMENT_DEFS:
+            data = save_db.PAIR_ACHIEVEMENT_DEFS[achievement_id]
+            return {
+                "name": data["name"],
+                "description": data["description"],
+                "character": " + ".join(data["characters"]),
+            }
+
+        if ":" not in achievement_id:
+            return None
+
+        character, suffix = achievement_id.split(":", 1)
+        data = save_db.ACHIEVEMENT_DEFS.get(suffix)
+
+        if not data:
+            return None
+
+        return {
+            "name": data["name"],
+            "description": data["description"],
+            "character": character,
+        }
+
+    def enqueue_new_achievement_notifications(self, unlocked_before):
+        unlocked_after = save_db.get_achievements()
+        new_items = [item for item in unlocked_after if item["achievement_id"] not in unlocked_before]
+
+        for item in reversed(new_items):
+            notification = self.get_achievement_notification_data(item["achievement_id"])
+
+            if notification:
+                notification["timer"] = 240
+                self.achievement_notifications.append(notification)
+
+    def render_wrapped_text(self, text, font, color, max_width):
+        lines = []
+        current = ""
+
+        for word in text.split():
+            candidate = word if not current else f"{current} {word}"
+
+            if font.size(candidate)[0] <= max_width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+
+        if current:
+            lines.append(current)
+
+        return [font.render(line, True, color) for line in lines]
+
+    def draw_achievement_notifications(self):
+        if not self.current_achievement_notification and self.achievement_notifications:
+            self.current_achievement_notification = self.achievement_notifications.pop(0)
+
+        notification = self.current_achievement_notification
+
+        if not notification:
+            return
+
+        notification["timer"] -= 1
+
+        if notification["timer"] <= 0:
+            self.current_achievement_notification = None
+            return
+
+        timer = notification["timer"]
+        panel_w = 500
+        panel_h = 118
+        target_x = WIDTH - panel_w - 24
+        slide = min(1.0, (240 - timer) / 18)
+
+        if timer < 28:
+            slide = min(slide, timer / 28)
+
+        x = int(WIDTH - (WIDTH - target_x) * slide)
+        y = 92
+        rect = pygame.Rect(x, y, panel_w, panel_h)
+
+        shadow = rect.move(6, 6)
+        pygame.draw.rect(screen, (0, 0, 0), shadow, border_radius=18)
+        pygame.draw.rect(screen, (18, 18, 22), rect, border_radius=18)
+        pygame.draw.rect(screen, (255, 140, 0), rect, 3, border_radius=18)
+
+        pygame.draw.circle(screen, BALL_COLOR, (x + 52, y + 58), 28)
+        pygame.draw.circle(screen, BLACK, (x + 52, y + 58), 28, 3)
+        pygame.draw.arc(screen, BLACK, (x + 32, y + 38, 40, 40), -1.2, 1.2, 3)
+        pygame.draw.line(screen, BLACK, (x + 52, y + 30), (x + 52, y + 86), 3)
+        pygame.draw.line(screen, BLACK, (x + 26, y + 58), (x + 78, y + 58), 3)
+
+        header = font_sm.render("CONQUISTA DESBLOQUEADA", True, (255, 215, 90))
+        title = font_md.render(notification["name"], True, WHITE)
+        character = font_sm.render(notification["character"], True, (255, 180, 90))
+        desc_lines = self.render_wrapped_text(notification["description"], font_sm, (220, 220, 220), panel_w - 125)
+
+        screen.blit(header, (x + 98, y + 14))
+        screen.blit(title, (x + 98, y + 36))
+        screen.blit(character, (x + panel_w - character.get_width() - 18, y + 18))
+
+        desc_y = y + 72
+        for line in desc_lines[:2]:
+            screen.blit(line, (x + 98, desc_y))
+            desc_y += 22
+
+    def draw_player_image(self, p_data, color):
+        char_name = p_data.get("char")
+
+        if char_name == "Bola":
+            return
+
+        team = p_data.get("team", 1)
+        img = self.tinted_small_images.get((char_name, team))
+
+        if img:
+            screen.blit(img, (p_data["x"], p_data["y"]))
+            draw_skin_overlay(screen, p_data["x"], p_data["y"], CHAR_W, CHAR_H, p_data.get("skin_id", "default"))
+            pygame.draw.rect(screen, color, (p_data["x"], p_data["y"], CHAR_W, CHAR_H), 2)
+        else:
+            pygame.draw.rect(screen, color, (p_data["x"], p_data["y"], CHAR_W, CHAR_H))
+            draw_skin_overlay(screen, p_data["x"], p_data["y"], CHAR_W, CHAR_H, p_data.get("skin_id", "default"))
+
+    def get_world_width(self):
+        if self.server_data:
+            return int(self.server_data.get("world_width", WIDTH))
+
+        return WIDTH
+
+    def ensure_window_width(self, target_width):
+        global screen
+
+        target_width = int(target_width)
+
+        if target_width == self.current_window_width:
+            return
+
+        screen = pygame.display.set_mode((target_width, HEIGHT))
+        self.current_window_width = target_width
+
+    def draw_game(self):
+        world_width = self.get_world_width()
+        geo = get_court_geometry(world_width)
+        self.ensure_window_width(world_width)
+        screen.fill((40, 45, 55))
+
+        floor_rect = pygame.Rect(0, HEIGHT - 60, world_width, 60)
+        pygame.draw.rect(screen, (205, 133, 63), floor_rect)
+        pygame.draw.rect(screen, (139, 69, 19), floor_rect, 5)
+
+        pygame.draw.line(screen, WHITE, (world_width // 2, HEIGHT - 60), (world_width // 2, HEIGHT), 5)
+
+        pygame.draw.rect(screen, GRAY, (80, HEIGHT - 360, 15, 300))
+        pygame.draw.rect(screen, WHITE, (geo["left_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+        pygame.draw.rect(screen, TEAM_1_COLOR, (geo["left_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
+        pygame.draw.rect(screen, (255, 69, 0), (geo["left_hoop_x1"], HOOP_Y, geo["left_hoop_x2"] - geo["left_hoop_x1"], 8))
+
+        pygame.draw.line(screen, WHITE, (geo["left_hoop_x1"], HOOP_Y + 8), (110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (geo["left_hoop_x2"], HOOP_Y + 8), (130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (110, HOOP_Y + 8), (130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (130, HOOP_Y + 8), (110, HEIGHT - 290), 2)
+
+        pygame.draw.rect(screen, GRAY, (world_width - 95, HEIGHT - 360, 15, 300))
+        pygame.draw.rect(screen, WHITE, (geo["right_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H))
+        pygame.draw.rect(screen, TEAM_2_COLOR, (geo["right_backboard_x"], BACKBOARD_Y, BACKBOARD_W, BACKBOARD_H), 3)
+        pygame.draw.rect(screen, (255, 69, 0), (geo["right_hoop_x1"], HOOP_Y, geo["right_hoop_x2"] - geo["right_hoop_x1"], 8))
+
+        pygame.draw.line(screen, WHITE, (geo["right_hoop_x1"], HOOP_Y + 8), (world_width - 130, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (geo["right_hoop_x2"], HOOP_Y + 8), (world_width - 110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (world_width - 130, HOOP_Y + 8), (world_width - 110, HEIGHT - 290), 2)
+        pygame.draw.line(screen, WHITE, (world_width - 110, HOOP_Y + 8), (world_width - 130, HEIGHT - 290), 2)
+
+        if not self.server_data:
+            loading = font_md.render("Entrando na partida...", True, WHITE)
+            screen.blit(loading, (WIDTH // 2 - loading.get_width() // 2, HEIGHT // 2))
+            return
+
+        if self.my_id not in self.server_data["players"]:
+            return
+
+        my_p_data = self.server_data["players"][self.my_id]
+        am_i_jackpot = my_p_data.get("jackpot_timer", 0) > 0
+        r_state = my_p_data.get("roleta_state", "IDLE")
+
+        if my_p_data.get("char") == "Bola" and self.bola_aiming:
+            ball_state = self.server_data.get("ball", {})
+
+            if ball_state.get("holder") is not None or ball_state.get("bola_throw_timer", 0) > 0:
+                self.bola_aiming = False
+
+        score = self.server_data["score"]
         win_points = int(self.server_data.get("win_points", DEFAULT_WIN_POINTS))
         score_text = font_xl.render(f"{score[0]} x {score[1]}", True, WHITE)
 
@@ -1818,8 +2254,6 @@ class GameClient:
             ping_txt = font_sm.render(f"Ping: {rtt:.0f}ms", True, ping_color)
             screen.blit(ping_txt, (world_width // 2 - ping_txt.get_width() // 2, 108))
 
-
-
         for p_id, p_data in self.server_data["players"].items():
             if p_data["char"] is None:
                 continue
@@ -1833,7 +2267,6 @@ class GameClient:
             self._interp[p_id] = prev
             p_data["x"] = prev[0]
             p_data["y"] = prev[1]
-
 
             if p_data["char"] == "Bola":
                 continue
