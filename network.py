@@ -63,7 +63,7 @@ class Network:
         self.addr = (self.server, self.port)
         save_server_config(self.server, self.port)
 
-    def connect(self, action, room_code="", win_points=None):
+    def connect(self, action, room_code="", win_points=None, token=None):
         try:
             self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.client.connect(self.addr)
@@ -74,6 +74,10 @@ class Network:
 
             elif action == "JOIN":
                 initial_data = ("JOIN", room_code)
+
+            elif action == "REJOIN":
+                # SPEC-01: reconexao usando o token recebido no CREATE/JOIN
+                initial_data = ("REJOIN", room_code, token)
 
             else:
                 return ("ERROR", "Ação inválida.")

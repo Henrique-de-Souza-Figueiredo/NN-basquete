@@ -1,4 +1,5 @@
 import os
+import json
 import sqlite3
 
 from config import COSMETICS, PUBLIC_CHARACTERS, SECRET_CHARACTERS
@@ -329,6 +330,20 @@ def init_db():
         )
         conn.execute("INSERT OR IGNORE INTO player_profile (id, money) VALUES (1, 0)")
         conn.execute("INSERT OR IGNORE INTO global_stats (id) VALUES (1)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS match_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                played_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                room_code TEXT,
+                winner_team INTEGER,
+                score_team1 INTEGER NOT NULL DEFAULT 0,
+                score_team2 INTEGER NOT NULL DEFAULT 0,
+                duration_ticks INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
         conn.execute("INSERT OR IGNORE INTO story_progress (id, unlocked_level) VALUES (1, 1)")
         conn.execute("INSERT OR IGNORE INTO owned_skins (skin_id) VALUES ('default')")
 
@@ -487,6 +502,77 @@ def record_match(character, won, baskets, points):
 
     if not is_secret_character(character):
         check_character_achievements(character)
+
+
+# ==========================================
+# SPEC-01: persistencia de token de reconexao
+# ==========================================
+CONN_TOKEN_FILE = os.path.join(APP_DIR, "conn_tokens.json")
+
+
+def save_conn_token(room_code, token):
+    """SPEC-01: salva o token de reconexao para uma sala (rejoin apos queda)."""
+    try:
+        data = {}
+        if os.path.exists(CONN_TOKEN_FILE):
+            with open(CONN_TOKEN_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+        data[room_code] = token
+        with open(CONN_TOKEN_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+def load_conn_token(room_code):
+    """SPEC-01: retorna o token salvo para a sala, ou None."""
+    try:
+        if os.path.exists(CONN_TOKEN_FILE):
+            with open(CONN_TOKEN_FILE, encoding="utf-8") as f:
+                return json.load(f).get(room_code)
+    except Exception:
+        pass
+    return None
+
+
+def record_match_history(room_code, winner_team, score, duration_ticks):
+    """SPEC-05: persiste o resultado de uma partida finalizada."""
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO match_history (room_code, winner_team, score_team1, score_team2, duration_ticks)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (room_code, winner_team, int(score[0]), int(score[1]), int(duration_ticks)),
+            )
+    except Exception:
+        pass
+
+
+def get_recent_matches(limit=5):
+    """SPEC-05: retorna as ultimas partidas registradas (mais recentes primeiro)."""
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT played_at, winner_team, score_team1, score_team2, duration_ticks
+                FROM match_history ORDER BY id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "played_at": r["played_at"],
+                "winner_team": r["winner_team"],
+                "score_team1": r["score_team1"],
+                "score_team2": r["score_team2"],
+                "duration_ticks": r["duration_ticks"],
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []
 
 
 def unlock_achievement(achievement_id, character):
@@ -753,3 +839,7 @@ def set_unlocked_story_level(level):
             "INSERT OR REPLACE INTO story_progress (id, unlocked_level) VALUES (1, ?)",
             (int(level),),
         )
+
+
+# Garante que as tabelas existam ao importar o modulo (inclui match_history da SPEC-05)
+init_db()

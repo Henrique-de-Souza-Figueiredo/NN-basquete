@@ -591,6 +591,8 @@ class GameClient:
         self._ball_interp = [None, None]
         self._ping_counter = 0  # SPEC-04: frame counter p/ ping periodico
         self._last_frame_id = -1  # SPEC-02: ultimo frame_id valido
+        self.conn_token = None  # SPEC-01: token de reconexao da sala atual
+
         self._desync_count = 0  # SPEC-02: contador de dessincronizacoes
 
 
@@ -782,8 +784,16 @@ class GameClient:
 
         save_server_config(host)
         self.net = Network(server_host=host)
+        # SPEC-01: tenta reconectar com token salvo antes de entrar como novo
+        token = save_db.load_conn_token(code)
+        if token:
+            response = self.net.connect("REJOIN", code, token=token)
+            if response and response[0] == "SUCCESS":
+                self.handle_connection(response)
+                return
         response = self.net.connect("JOIN", code)
         self.handle_connection(response)
+
 
     def leave_match_to_menu(self):
         if self.net.connected:
@@ -2305,6 +2315,24 @@ class GameClient:
         ult_txt = font_sm.render(ult_label, True, ult_color)
         screen.blit(ult_txt, (ult_x + ult_w // 2 - ult_txt.get_width() // 2, ult_y - 23))
 
+        # SPEC-05: placar persistente - ultimas partidas registradas localmente
+        recent = save_db.get_recent_matches(5)
+        if recent:
+            hy = HEIGHT - 150
+            panel = pygame.Rect(20, hy, 360, 130)
+            pygame.draw.rect(screen, (18, 22, 32), panel, border_radius=10)
+            pygame.draw.rect(screen, (90, 90, 120), panel, 2, border_radius=10)
+            hdr = font_sm.render("ULTIMAS PARTIDAS", True, (200, 200, 230))
+            screen.blit(hdr, (panel.x + 12, hy + 8))
+            for idx, m in enumerate(recent):
+                wt = m.get("winner_team")
+                wname = "AZUL" if wt == 1 else ("VERM" if wt == 2 else "-?")
+                line = font_sm.render(
+                    f'{idx+1}. {wname} {m["score_team1"]}x{m["score_team2"]}',
+                    True, (220, 220, 220),
+                )
+                screen.blit(line, (panel.x + 12, hy + 32 + idx * 19))
+
         self.btn_leave_match.draw(screen)
         self.draw_reaction_wheel()
 
@@ -2324,6 +2352,12 @@ class GameClient:
 
             if len(response) >= 6:
                 forced_char = response[5]
+
+            # SPEC-01: salva token de reconexao para rejoin posterior
+            if len(response) >= 7 and response[6]:
+                self.conn_token = response[6]
+                save_db.save_conn_token(self.room_code, response[6])
+
 
             if forced_char in CHARACTERS:
                 self.selected_char_idx = CHARACTERS.index(forced_char)

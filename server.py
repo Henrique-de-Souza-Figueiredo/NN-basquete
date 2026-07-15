@@ -6,7 +6,9 @@ import random
 import string
 import math
 import time
+import uuid  # SPEC-01: token de reconexao
 from config import *
+import save_db  # SPEC-05: placar persistente local
 
 # NOTA DE SEGURANCA: o jogo usa pickle para o protocolo de rede desde a origem.
 # E' um jogo local/LAN (Radmin VPN) entre jogadores confiaveis; trocar por JSON/
@@ -1873,12 +1875,27 @@ def award_score(room, scored_team):
         room["game_over"] = True
         room["winner_team"] = 1
         build_match_awards(room)
+        _persist_match_history(room)  # SPEC-05
 
     elif room["score"][1] >= win_points:
         room["game_started"] = False
         room["game_over"] = True
         room["winner_team"] = 2
         build_match_awards(room)
+        _persist_match_history(room)  # SPEC-05
+
+
+def _persist_match_history(room):
+    """SPEC-05: grava o resultado da partida no placar persistente local."""
+    try:
+        save_db.record_match_history(
+            room_code=room.get("room_code"),
+            winner_team=room.get("winner_team"),
+            score=room.get("score", [0, 0]),
+            duration_ticks=room.get("frame_counter", 0),
+        )
+    except Exception as e:
+        print(f"[SPEC-05] falha ao registrar historico: {e}")
 
 
 def update_murilo_npcs(room):
@@ -2663,6 +2680,7 @@ def handle_client(conn, addr):
 
             rooms[room_code] = {
                 "players": {},
+                "room_code": room_code,  # SPEC-05: código da sala para histórico
                 "game_started": False,
                 "game_over": False,
                 "winner_team": None,
@@ -2718,11 +2736,13 @@ def handle_client(conn, addr):
                 "x": 0,
                 "y": 0,
                 "world_width": WIDTH,
+                "conn_token": str(uuid.uuid4()),  # SPEC-01: token de reconexao
             }
 
             update_room_world_width(rooms[room_code])
 
-            conn.send(pickle.dumps(("SUCCESS", room_code, player_id, team, False, None)))
+            conn.send(pickle.dumps(("SUCCESS", room_code, player_id, team, False, None,
+                                    rooms[room_code]["players"][player_id]["conn_token"])))
 
         elif initial_data[0] == "JOIN":
             room_code = initial_data[1]
@@ -2736,6 +2756,8 @@ def handle_client(conn, addr):
             if room.get("game_over"):
                 conn.send(pickle.dumps(("ERROR", "Essa partida já acabou.")))
                 return
+
+            conn_token = str(uuid.uuid4())  # SPEC-01: token de reconexao
 
             player_id = get_next_player_id(room)
             team = choose_balanced_team(room)
@@ -2753,6 +2775,7 @@ def handle_client(conn, addr):
                     "team": team,
                     "x": 0,
                     "y": 0,
+                    "conn_token": conn_token,
                 }
 
                 update_room_world_width(room)
@@ -2760,7 +2783,7 @@ def handle_client(conn, addr):
                 spawn_player_for_match(room["players"][player_id])
                 reset_player_match_stats(room["players"][player_id])
 
-                conn.send(pickle.dumps(("SUCCESS", room_code, player_id, team, True, chosen_char)))
+                conn.send(pickle.dumps(("SUCCESS", room_code, player_id, team, True, chosen_char, conn_token)))
 
             else:
                 room["players"][player_id] = {
@@ -2770,11 +2793,42 @@ def handle_client(conn, addr):
                     "x": 0,
                     "y": 0,
                     "world_width": get_room_width(room),
+                    "conn_token": conn_token,
                 }
 
                 update_room_world_width(room)
 
-                conn.send(pickle.dumps(("SUCCESS", room_code, player_id, team, False, None)))
+                conn.send(pickle.dumps(("SUCCESS", room_code, player_id, team, False, None, conn_token)))
+
+        elif initial_data[0] == "REJOIN":  # SPEC-01: reconexao por token
+            room_code = initial_data[1]
+            token = initial_data[2] if len(initial_data) > 2 else None
+
+            if room_code not in rooms:
+                conn.send(pickle.dumps(("ERROR", "Sala nao encontrada.")))
+                return
+
+            room = rooms[room_code]
+
+            if room.get("game_over"):
+                conn.send(pickle.dumps(("ERROR", "Essa partida ja acabou.")))
+                return
+
+            found = None
+            for pid, p in room["players"].items():
+                if p.get("conn_token") == token:
+                    found = pid
+                    break
+
+            if found is None:
+                conn.send(pickle.dumps(("ERROR", "Token invalido ou voce nao esta nesta sala.")))
+                return
+
+            player_id = found
+            team = room["players"][player_id]["team"]
+            in_game = room["game_started"]
+            char = room["players"][player_id].get("char")
+            conn.send(pickle.dumps(("SUCCESS", room_code, player_id, team, in_game, char, token)))
 
         while True:
             client_data = pickle.loads(conn.recv(BUFFER_SIZE))
