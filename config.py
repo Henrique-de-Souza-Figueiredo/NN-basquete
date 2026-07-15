@@ -27,6 +27,15 @@ DEFAULT_WIN_POINTS = MAX_SCORE
 # Opcoes oferecidas ao host no menu de criacao de partida
 WIN_POINTS_OPTIONS = [11, 15, 21, 25, 30, 50]
 ULTIMATE_MAX = 100
+
+# ==========================================
+# MELHORIAS (specs de networking/UX)
+# ==========================================
+# SPEC-03: fator de interpolacao do cliente (0=sem smoothing, 1=teleporte)
+INTERP_FACTOR = 0.3
+# SPEC-04: limiares de ping para cor no HUD (ms)
+PING_GREEN_MS = 40
+PING_YELLOW_MS = 100
 ULTIMATE_COSTS = {
     "Henrique": 110,
     "Natan": 105,

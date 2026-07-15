@@ -2,6 +2,7 @@ import socket
 import pickle
 import json
 import os
+import time  # SPEC-04: medicoes de RTT
 from config import PORT, BUFFER_SIZE
 
 
@@ -54,6 +55,7 @@ class Network:
 
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.connected = False
+        self.last_rtt = None  # SPEC-04: RTT em ms da ultima medicao de ping
 
     def set_server(self, server_host, server_port=None):
         self.server = server_host
@@ -110,6 +112,22 @@ class Network:
             print(f"[ERRO SEND] {e}")
             self.connected = False
             return None
+
+    def ping(self):
+        """SPEC-04: mede o RTT (ms) enviando PING e aguardando PONG.
+        Nao afeta o jogo; usa o socket ja aberto."""
+        if not self.connected:
+            return None
+        try:
+            t0 = time.perf_counter()
+            self.client.send(pickle.dumps(("PING",)))
+            resp = pickle.loads(self.client.recv(BUFFER_SIZE))
+            if isinstance(resp, tuple) and resp and resp[0] == "PONG":
+                self.last_rtt = round((time.perf_counter() - t0) * 1000, 1)
+                return self.last_rtt
+        except Exception:
+            self.connected = False
+        return None
 
     def disconnect(self):
         try:

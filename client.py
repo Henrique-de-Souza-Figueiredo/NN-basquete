@@ -1,4 +1,7 @@
 import pygame
+import zlib  # SPEC-02: validacao de crc
+
+
 import sys
 import os
 import math
@@ -583,6 +586,14 @@ class GameClient:
         self.room_code = ""
         self.error_msg = ""
         self.server_data = None
+        # SPEC-03: estado de interpolacao de render
+        self._interp = {}
+        self._ball_interp = [None, None]
+        self._ping_counter = 0  # SPEC-04: frame counter p/ ping periodico
+        self._last_frame_id = -1  # SPEC-02: ultimo frame_id valido
+        self._desync_count = 0  # SPEC-02: contador de dessincronizacoes
+
+
         self.current_window_width = WIDTH
 
         self.selected_char_idx = 0
@@ -1790,10 +1801,29 @@ class GameClient:
         goal_txt = font_sm.render(f"Vitoria em {win_points} pts", True, (220, 220, 220))
         screen.blit(goal_txt, (world_width // 2 - goal_txt.get_width() // 2, 92))
 
+        # SPEC-04: indicador de latencia no HUD
+        rtt = self.net.last_rtt
+        if rtt is not None:
+            ping_color = (80, 255, 120) if rtt <= PING_GREEN_MS else ((255, 220, 80) if rtt <= PING_YELLOW_MS else (255, 80, 80))
+            ping_txt = font_sm.render(f"Ping: {rtt:.0f}ms", True, ping_color)
+            screen.blit(ping_txt, (world_width // 2 - ping_txt.get_width() // 2, 108))
+
+
 
         for p_id, p_data in self.server_data["players"].items():
             if p_data["char"] is None:
                 continue
+
+            # SPEC-03: suaviza movimento em rede via lerp
+            target_x = p_data["x"]
+            target_y = p_data["y"]
+            prev = self._interp.get(p_id, [target_x, target_y])
+            prev[0] += (target_x - prev[0]) * INTERP_FACTOR
+            prev[1] += (target_y - prev[1]) * INTERP_FACTOR
+            self._interp[p_id] = prev
+            p_data["x"] = prev[0]
+            p_data["y"] = prev[1]
+
 
             if p_data["char"] == "Bola":
                 continue
@@ -2043,6 +2073,16 @@ class GameClient:
         ball = self.server_data["ball"]
 
         pygame.draw.circle(screen, BALL_COLOR, (int(ball["x"]), int(ball["y"])), BALL_RAD)
+
+        # SPEC-03: suaviza a bola em rede
+        btx, bty = ball["x"], ball["y"]
+        if self._ball_interp[0] is None:
+            self._ball_interp = [btx, bty]
+        self._ball_interp[0] += (btx - self._ball_interp[0]) * INTERP_FACTOR
+        self._ball_interp[1] += (bty - self._ball_interp[1]) * INTERP_FACTOR
+        ball["x"] = self._ball_interp[0]
+        ball["y"] = self._ball_interp[1]
+
         pygame.draw.circle(screen, BLACK, (int(ball["x"]), int(ball["y"])), BALL_RAD, 2)
 
         if ball.get("holder") == self.my_id and r_state != "CUTSCENE":
@@ -2300,6 +2340,26 @@ class GameClient:
         else:
             self.error_msg = response[1] if response else "Erro de conexão."
 
+    def _validate_room(self, room):
+        """SPEC-02: valida frame_id (ordem) e crc32 (integridade) do estado.
+        Em caso de pacote antigo ou corrompido, mantem o estado anterior."""
+        if not isinstance(room, dict):
+            return None
+        fid = room.get("frame_id", 0)
+        if fid < self._last_frame_id:
+            return self.server_data
+        crc = room.get("crc")
+        if crc is not None:
+            payload = dict(room)
+            payload.pop("crc", None)
+            calc = zlib.crc32(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)) & 0xffffffff
+            if calc != crc:
+                self._desync_count += 1
+                print(f"[DESSINC] crc invalido recv={crc} calc={calc}")
+                return self.server_data
+        self._last_frame_id = fid
+        return room
+
     def run(self):
         running = True
 
@@ -2310,6 +2370,12 @@ class GameClient:
 
             mouse_pos = pygame.mouse.get_pos()
             data_to_send = {}
+
+            # SPEC-04: mede ping periodicamente (nao bloqueia o jogo)
+            self._ping_counter = (self._ping_counter + 1) % 30
+            if self._ping_counter == 0 and self.net.connected:
+                self.net.ping()
+
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -3001,7 +3067,12 @@ class GameClient:
                     data_to_send["y"] = self.player_y
                     data_to_send["facing"] = self.facing
 
-                self.server_data = self.net.send(data_to_send)
+                raw = self.net.send(data_to_send)
+                if raw is not None:
+                    validated = self._validate_room(raw)
+                    if validated is not None:
+                        self.server_data = validated
+
 
                 if self.server_data:
                     self.check_replay_trigger()

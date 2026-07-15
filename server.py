@@ -1,11 +1,16 @@
 import socket
 import threading
 import pickle
+import zlib  # SPEC-02: checksum anti-dessincronizacao
 import random
 import string
 import math
 import time
 from config import *
+
+# NOTA DE SEGURANCA: o jogo usa pickle para o protocolo de rede desde a origem.
+# E' um jogo local/LAN (Radmin VPN) entre jogadores confiaveis; trocar por JSON/
+# msgspec exigiria reescrever cliente e servidor. Mantido por compatibilidade.
 
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.bind((HOST, PORT))
@@ -13,6 +18,17 @@ server.listen()
 print(f"[SERVIDOR LIGADO] Aguardando em {HOST}:{PORT}...")
 
 rooms = {}
+
+
+def send_room(conn, room):
+    """SPEC-02: envia o room com frame_id e crc32 para o cliente detectar
+    pacotes fora de ordem ou corrompidos (anti-dessincronizacao)."""
+    room["frame_id"] = room.get("frame_counter", 0)
+    payload = dict(room)
+    payload.pop("crc", None)
+    room["crc"] = zlib.crc32(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)) & 0xffffffff
+    conn.send(pickle.dumps(room, protocol=pickle.HIGHEST_PROTOCOL))
+
 
 ROLETA_OUTCOMES = [
     "BUFF_BOLACHA",
@@ -2133,6 +2149,7 @@ def update_training_bots(room):
 def room_physics_loop(room_code):
     while room_code in rooms and rooms[room_code]["game_started"]:
         room = rooms[room_code]
+        room["frame_counter"] = room.get("frame_counter", 0) + 1  # SPEC-02
         update_room_world_width(room)
         world_width = get_room_width(room)
         geo = get_room_geometry(room)
@@ -2654,6 +2671,7 @@ def handle_client(conn, addr):
                 "world_width": WIDTH,
                 # Pontos para vencer: definido pelo host no CREATE (validado acima)
                 "win_points": chosen,
+                "frame_counter": 0,  # SPEC-02: incrementado a cada tick da simulacao
 
                 "replay_id": 0,
                 "replay_timer": 0,
@@ -2761,6 +2779,14 @@ def handle_client(conn, addr):
         while True:
             client_data = pickle.loads(conn.recv(BUFFER_SIZE))
 
+            # SPEC-04: PING/PONG nao toca no estado do jogo
+            if isinstance(client_data, tuple) and client_data and client_data[0] == "PING":
+                try:
+                    conn.send(pickle.dumps(("PONG",)))
+                except socket.error:
+                    pass
+                continue
+
             if not client_data:
                 break
 
@@ -2777,7 +2803,7 @@ def handle_client(conn, addr):
             player = room["players"][player_id]
 
             if room.get("game_over"):
-                conn.send(pickle.dumps(room))
+                send_room(conn, room)
                 continue
 
             if not room["game_started"]:
@@ -2832,7 +2858,7 @@ def handle_client(conn, addr):
                             room["skip_votes"] = set()
                             room["skip_votes_display"] = []
 
-                    conn.send(pickle.dumps(room))
+                    send_room(conn, room)
                     continue
 
                 if "x" in client_data and player.get("roleta_state") != "CUTSCENE":
@@ -3030,7 +3056,7 @@ def handle_client(conn, addr):
                         if ability_char:
                             apply_character_ability(room, player, ability_char, client_data.get("facing", 1))
 
-            conn.send(pickle.dumps(room))
+            send_room(conn, room)
 
     except Exception:
         import traceback
